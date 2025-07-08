@@ -6,9 +6,9 @@ const help = clitools.help;
 const die = clitools.die;
 const streql = clitools.streql;
 
-const protocol = @import("btp");
-const MetaInfo = protocol.MetaInfo;
-const Message = protocol.Message;
+const torzion = @import("torzion");
+const MetaInfo = torzion.MetaInfo;
+const Message = torzion.Message;
 
 const Allocator = std.mem.Allocator;
 
@@ -29,15 +29,20 @@ pub const usage =
 ;
 
 // config options provided via cmdline
-const Config = struct {
-    path: []const u8 = undefined,
-    name: []const u8 = undefined,
-    piece_length: usize = 16 * std.math.pow(usize, 2, 10),
-    announce: []const u8 = undefined, // TODO: this probably can't be an arraylist anymore
-    out: []const u8 = undefined,
-};
+var path: []const u8 = undefined;
+var piece_length: usize = 16 * std.math.pow(usize, 2, 10);
+var announce: []const u8 = undefined;
+var out: []const u8 = undefined;
 
-var config = Config{};
+const InputError = error{
+    PathUndefined,
+    PathInvalid,
+    AnnounceUndefined,
+    AnnounceInvalid,
+    OutfileUndefined,
+    OutfileInvalid,
+    PieceLengthInvalid,
+};
 
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
@@ -47,37 +52,26 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
         },
         .options = try runner.allocOptions(&.{
             cli.Option{
-                .short_alias = 'n',
-                .long_name = "name",
-                .required = true,
-                .value_ref = runner.mkRef(&config.name),
-                .help = "Name of torrent",
-                .value_name = "STR",
-            },
-            cli.Option{
-                // piece-length
                 .short_alias = 'l',
                 .long_name = "piece-length",
                 .required = false,
-                .value_ref = runner.mkRef(&config.piece_length),
+                .value_ref = runner.mkRef(&piece_length),
                 .help = "Piece length",
                 .value_name = "INT",
             },
             cli.Option{
-                // announce
                 .short_alias = 'a',
                 .long_name = "announce",
                 .required = true,
-                .value_ref = runner.mkRef(&config.announce),
+                .value_ref = runner.mkRef(&announce),
                 .help = "Announce list",
                 .value_name = "STR",
             },
             cli.Option{
-                // out
                 .short_alias = 'o',
                 .long_name = "out",
                 .required = true,
-                .value_ref = runner.mkRef(&config.out),
+                .value_ref = runner.mkRef(&out),
                 .help = "Output .torrent file",
                 .value_name = "STR",
             },
@@ -88,7 +82,7 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
                 .positional_args = cli.PositionalArgs{
                     .required = try runner.allocPositionalArgs(&.{
                         cli.PositionalArg{
-                            .value_ref = runner.mkRef(&config.path),
+                            .value_ref = runner.mkRef(&path),
                             .name = "path",
                             .help = "PATH",
                         },
@@ -101,8 +95,8 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
 
 fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
     const wd = std.fs.cwd();
-    const dir = wd.openDir(config.path, .{}) catch |err|
-        die("Couldn't open {s}: {s}", .{ config.path, @errorName(err) }, 1);
+    const dir = wd.openDir(path, .{}) catch |err|
+        die("Couldn't open {s}: {s}", .{ path, @errorName(err) }, 1);
 
     var statwalker = try dir.walk(allocator);
     defer statwalker.deinit();
@@ -125,12 +119,12 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
         directory[count] = try MetaInfo.File.init(stat.size, entry.path, allocator);
     }
 
-    content_len += content_len % config.piece_length;
+    content_len += content_len % piece_length;
 
-    const piece_count = content_len / config.piece_length;
+    const piece_count = content_len / piece_length;
 
     // the final max size will be the piece length multiplied by the piece count
-    std.debug.assert(content_len == config.piece_length * piece_count);
+    std.debug.assert(content_len == piece_length * piece_count);
 
     var contents = try allocator.alloc(u8, content_len);
     defer allocator.free(contents);
@@ -160,18 +154,18 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
     var i: usize = 0;
     const pieces = try allocator.alloc([20]u8, piece_count);
     while (i < contents.len) : (i += 1) {
-        const chunk = contents[i * (config.piece_length) .. (i * (config.piece_length)) + config.piece_length];
+        const chunk = contents[i * (piece_length) .. (i * (piece_length)) + piece_length];
         std.crypto.hash.Sha1.hash(chunk, &pieces[i], .{});
     }
 
-    const tiers = try allocator.alloc(protocol.MetaInfo.AnnounceList.Tier, config.announce.len);
-    var announce = protocol.MetaInfo.AnnounceList.init(allocator);
+    const tiers = try allocator.alloc(torzion.MetaInfo.AnnounceList.Tier, announce.len);
+    var announce_list = torzion.MetaInfo.AnnounceList.init(allocator);
 
     var counter: usize = 0;
-    while (counter < config.announce.len) : (counter += 1) {
-        tiers[counter] = protocol.MetaInfo.AnnounceList.Tier{
-            .members = config.announce[counter],
-            .order = .{0},
+    while (counter < announce_list.len) : (counter += 1) {
+        tiers[counter] = torzion.MetaInfo.AnnounceList.Tier{
+            .members = announce_list[counter],
+            .order = &.{0},
         };
     }
 
@@ -180,8 +174,8 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
     return .{
         .announce = announce,
         .info = .{
-            .name = config.name,
-            .piece_length = config.piece_length,
+            .name = name,
+            .piece_length = piece_length,
             .pieces = pieces,
             .content = .{ .files = directory },
         },
@@ -190,32 +184,37 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
 
 fn makeTorrentFromFile(allocator: std.mem.Allocator) !MetaInfo {
     const wd = std.fs.cwd();
-    const stat = try wd.statFile(config.path); // std.fs.Dir.StatFileError;
+    const stat = try wd.statFile(path); // std.fs.Dir.StatFileError;
 
-    const content_len = stat.size + (stat.size % config.piece_length);
+    const content_len = stat.size + (stat.size % piece_length);
 
     const contents = allocator.alloc(u8, content_len);
     defer allocator.free(contents);
     std.crypto.utils.secureZero(u8, contents);
-    _ = wd.readFile(config.path, contents) catch |e| die("Failed to read {s}, {s}", .{ config.path, @errorName(e) }, 1);
+
+    _ = wd.readFile(path, contents) // std.fs.File.OpenError, std.fs.File.ReadError
+        catch |e| die("Failed to read {s}, {s}", .{ path, @errorName(e) }, 1);
 
     // quick maffs to figure out the piece count based on the provided piece length
     // WARN: is this math right?
-    const piece_count = content_len / config.piece_length;
+    const piece_count = content_len / piece_length;
     const pieces = allocator.alloc([20]u8, piece_count) catch |e| die("{s}", .{@errorName(e)}, 1);
 
     var i: usize = 0;
     while (i < contents.len) : (i += 1) {
-        const chunk = contents[i * (config.piece_length) .. (i * (config.piece_length)) + config.piece_length];
+        const chunk = contents[i * (piece_length) .. (i * (piece_length)) + piece_length];
         std.crypto.hash.Sha1.hash(chunk, &pieces[i], .{});
     }
 
     return .{
-        .announce = config.announce,
+        .announce = announce,
         .info = .{
-            .piece_length = config.piece_length,
+            .name = std.fs.path.basename(path),
+            .piece_length = piece_length,
             .pieces = pieces,
-            .content = .{ .length = contents.len },
+            .length = contents.len,
+
+            // private: bool,
         },
     };
 }
@@ -235,28 +234,20 @@ pub fn run() !void {
     // };
 
     const wd = std.fs.cwd();
-    const stat = try wd.statFile(config.path);
+    const stat = try wd.statFile(path);
 
     const torrent = switch (stat.kind) {
-        .directory => makeTorrentFromDir(allocator) catch |err| {
-            _ = err;
-        },
-        .file => makeTorrentFromFile(allocator) catch |err| {
-            _ = err;
-        },
-        .sym_link => {
-            die("Can't follow symlinks\n", .{}, 1);
-        },
-        else => {
-            die("Unsupported file type '{s}'\n", .{@tagName(stat.kind)}, 1);
-        },
+        .directory => try makeTorrentFromDir(allocator),
+        .file => try makeTorrentFromFile(allocator),
+        .sym_link => die("Can't follow symlinks\n", .{}, 1),
+        else => die("Unsupported file type '{s}'\n", .{@tagName(stat.kind)}, 1),
     };
 
-    const encoder = try protocol.Message.Encoder.init(allocator);
+    const encoder = try torzion.Message.Encoder.init(allocator);
     defer encoder.deinit();
 
-    const outfile = wd.openFile(config.out, .{ .mode = .write_only }) catch |err|
-        die("couldn't open file {s} for for writing: {s}", .{ config.out, @errorName(err) }, 1);
+    const outfile = wd.openFile(out, .{ .mode = .write_only }) catch |err|
+        die("couldn't open file {s} for for writing: {s}", .{ out, @errorName(err) }, 1);
 
     defer outfile.close();
 
@@ -275,11 +266,11 @@ pub fn action() anyerror!void {
         \\
     ,
         .{
-            config.out,
-            config.path,
-            config.name,
-            config.announce,
-            config.piece_length,
+            out,
+            path,
+            name,
+            announce,
+            piece_length,
         },
     );
 

@@ -6,8 +6,6 @@ const Encoder = @import("BEncoder.zig");
 const calculateEncodedLength = Encoder.calculateEncodedLength;
 const Decoder = @import("BDecoder.zig");
 
-const lf = enum { length, files };
-const Content = union(lf) { length: usize, files: []File };
 const SHA1Hash = [20]u8;
 
 const Self = @This();
@@ -109,168 +107,150 @@ pub const Info = struct {
     name: []const u8,
     piece_length: usize = 16 * std.math.pow(usize, 2, 10),
     pieces: []SHA1Hash,
-    content: Content,
-    private: bool,
+    length: ?usize,
+    files: ?[]File,
+    private: bool = false,
 
-    const MissingField = error{
-        Name,
-        PieceLength,
-        Pieces,
-        Content,
-        Private,
-    };
+    // const MissingField = error{
+    //     Name,
+    //     PieceLength,
+    //     Pieces,
+    //     Private,
+    // };
 
-    pub fn init(name: []const u8, piece_length: usize, pieces: []SHA1Hash, content: Content, private: bool) Info {
-        return .{
-            .name = name,
-            .piece_length = piece_length,
-            .pieces = pieces,
-            .content = content,
-            .private = private,
-        };
-    }
+    // pub fn encode(self: *Info, encoder: *Encoder) !void {
+    //     encoder.write("d");
+    //     encoder.writeString("name");
+    //     encoder.writeString(self.name);
+    //     encoder.writeString("piece length");
+    //     encoder.writeInteger(self.piece_length);
+    //     encoder.writeString("pieces");
+    //     encoder.writeString(self.pieces);
+    //     switch (self.content) {
+    //         .length => {
+    //             encoder.writeString("length");
+    //             encoder.writeString(self.content.files);
+    //         },
+    //         .files => {
+    //             encoder.writeString("files");
+    //             encoder.write("l");
+    //             for (self.content.files) |file| file.encode(encoder);
+    //             encoder.write("e");
+    //         },
+    //     }
+    //     encoder.write("e");
+    // }
 
-    pub fn encode(self: *Info, encoder: *Encoder) !void {
-        encoder.write("d");
-        encoder.writeString("name");
-        encoder.writeString(self.name);
-        encoder.writeString("piece length");
-        encoder.writeInteger(self.piece_length);
-        encoder.writeString("pieces");
-        encoder.writeString(self.pieces);
-        switch (self.content) {
-            .length => {
-                encoder.writeString("length");
-                encoder.writeString(self.content.files);
-            },
-            .files => {
-                encoder.writeString("files");
-                encoder.write("l");
-                for (self.content.files) |file| file.encode(encoder);
-                encoder.write("e");
-            },
-        }
-        encoder.write("e");
-    }
+    // pub fn decode(decoder: *Decoder, allocator: std.mem.Allocator) !Info {
+    //     var name: ?[]u8 = null;
+    //     var piece_length: ?usize = null;
+    //     var pieces: ?[]SHA1Hash = null;
+    //     var content: ?Content = null;
+    //     var private: bool = false;
+    //
+    //     try decoder.skip("d");
+    //     while (decoder.charsRemaining()) {
+    //         if (decoder.char() == 'e') break;
+    //         const key = try decoder.readString();
+    //
+    //         if (eql(u8, key, "name")) {
+    //             if (name != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             const value = try decoder.readString();
+    //             name = try allocator.alloc(u8, value.len);
+    //             std.mem.copyForwards(u8, name, value);
+    //         } else if (eql(u8, key, "piece length")) {
+    //             if (piece_length != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             const value = try decoder.readInteger();
+    //             if (value < 0)
+    //                 return Decoder.Error.FormatError;
+    //
+    //             piece_length = @intCast(value);
+    //         } else if (eql(u8, key, "pieces")) {
+    //             if (pieces != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             const value = try decoder.readString();
+    //
+    //             if (value.len % 20 != 0)
+    //                 return Decoder.Error.FormatError;
+    //
+    //             const count = value.len / 20;
+    //             var counter: usize = 0;
+    //
+    //             pieces = try allocator.alloc(SHA1Hash, count);
+    //             while (decoder.charsRemaining() and counter < count) : (counter += 1) {
+    //                 const piece = counter * 20;
+    //                 std.mem.copyForwards(u8, pieces[counter][0..20], value[piece .. piece + 20]);
+    //             }
+    //         } else if (eql(u8, key, "length")) {
+    //             if (content != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             const length = try decoder.readInteger();
+    //             if (length < std.math.minInt(usize))
+    //                 return Decoder.Error.InvalidValue;
+    //
+    //             content = .{ .length = @intCast(length) };
+    //         } else if (eql(u8, key, "files")) {
+    //             if (content != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             try decoder.skip("l");
+    //             const files = try allocator.alloc(File, 24);
+    //
+    //             var count: usize = 0;
+    //             while (decoder.charsRemaining() and decoder.char() != 'e') : (count += 1) {
+    //                 const file = try File.decode(decoder, allocator);
+    //                 files[count] = file;
+    //             }
+    //
+    //             try decoder.skip("e");
+    //
+    //             // it should be impossible not to shrink this allocation
+    //             // if you get here, you're using the wrong allocator
+    //             if (count < files.len and !allocator.resize(files, count)) unreachable;
+    //
+    //             content = .{ .files = files };
+    //         } else if (eql(u8, key, "private")) {
+    //             if (private != null)
+    //                 return Decoder.Error.FieldDefinedTwice;
+    //
+    //             const number = try decoder.readInteger();
+    //             private = if (number == 1) true else false;
+    //         }
+    //     }
+    //
+    //     try decoder.skip("e");
+    //
+    //     if (name == null)
+    //         return MissingField.Name;
+    //
+    //     if (pieces == null)
+    //         return MissingField.Pieces;
+    //
+    //     if (piece_length == null)
+    //         return MissingField.PieceLength;
+    //
+    //     if (content == null)
+    //         return MissingField.Content;
+    //
+    //     return Info{
+    //         .name = name.?,
+    //         .piece_length = piece_length.?,
+    //         .pieces = pieces.?,
+    //         .content = content.?,
+    //         .private = private,
+    //     };
+    // }
 
-    pub fn decode(decoder: *Decoder, allocator: std.mem.Allocator) !Info {
-        var name: ?[]u8 = null;
-        var piece_length: ?usize = null;
-        var pieces: ?[]SHA1Hash = null;
-        var content: ?Content = null;
-        var private: bool = false;
-
-        try decoder.skip("d");
-        while (decoder.charsRemaining()) {
-            if (decoder.char() == 'e') break;
-            const key = try decoder.readString();
-
-            if (eql(u8, key, "name")) {
-                if (name != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                const value = try decoder.readString();
-                name = try allocator.alloc(u8, value.len);
-                std.mem.copyForwards(u8, name, value);
-            } else if (eql(u8, key, "piece length")) {
-                if (piece_length != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                const value = try decoder.readInteger();
-                if (value < 0)
-                    return Decoder.Error.FormatError;
-
-                piece_length = @intCast(value);
-            } else if (eql(u8, key, "pieces")) {
-                if (pieces != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                const value = try decoder.readString();
-
-                if (value.len % 20 != 0)
-                    return Decoder.Error.FormatError;
-
-                const count = value.len / 20;
-                var counter: usize = 0;
-
-                pieces = try allocator.alloc(SHA1Hash, count);
-                while (decoder.charsRemaining() and counter < count) : (counter += 1) {
-                    const piece = counter * 20;
-                    std.mem.copyForwards(u8, pieces[counter][0..20], value[piece .. piece + 20]);
-                }
-            } else if (eql(u8, key, "length")) {
-                if (content != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                const length = try decoder.readInteger();
-                if (length < std.math.minInt(usize))
-                    return Decoder.Error.InvalidValue;
-
-                content = .{ .length = @intCast(length) };
-            } else if (eql(u8, key, "files")) {
-                if (content != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                try decoder.skip("l");
-                const files = try allocator.alloc(File, 24);
-
-                var count: usize = 0;
-                while (decoder.charsRemaining() and decoder.char() != 'e') : (count += 1) {
-                    const file = try File.decode(decoder, allocator);
-                    files[count] = file;
-                }
-
-                try decoder.skip("e");
-
-                // it should be impossible not to shrink this allocation
-                // if you get here, you're using the wrong allocator
-                if (count < files.len and !allocator.resize(files, count)) unreachable;
-
-                content = .{ .files = files };
-            } else if (eql(u8, key, "private")) {
-                if (private != null)
-                    return Decoder.Error.FieldDefinedTwice;
-
-                const number = try decoder.readInteger();
-                private = if (number == 1) true else false;
-            }
-        }
-
-        try decoder.skip("e");
-
-        if (name == null)
-            return MissingField.Name;
-
-        if (pieces == null)
-            return MissingField.Pieces;
-
-        if (piece_length == null)
-            return MissingField.PieceLength;
-
-        if (content == null)
-            return MissingField.Content;
-
-        return Info{
-            .name = name.?,
-            .piece_length = piece_length.?,
-            .pieces = pieces.?,
-            .content = content.?,
-            .private = private,
-        };
-    }
-
-    pub fn jsonStringify(self: Info, writer: anytype) !void {
-        try writer.write(self.name);
-        try writer.write(self.piece_length);
-        try writer.write(self.pieces);
-        try writer.write(self.content);
-    }
-
-    pub fn getEncodedLength(self: *Info) u8 {
-        var length: usize = 0;
-        self.name.len;
-        return 0;
-    }
+    // pub fn getEncodedLength(self: *Info) u8 {
+    //     self.name.len;
+    //     return 0;
+    // }
 };
 
 /// a list of list of list of u8
@@ -318,7 +298,9 @@ pub const AnnounceList = struct {
             try decoder.skip("e");
         }
 
-        pub fn getEncodedLength(self: Tier) usize {}
+        pub fn getEncodedLength(self: Tier) usize {
+            _ = self;
+        }
     };
 
     pub fn init(allocator: std.mem.Allocator) !AnnounceList {
@@ -418,47 +400,47 @@ pub fn init(announce: AnnounceList, info: Info) Self {
     };
 }
 
-pub fn encode(self: *Self, encoder: *Encoder) !void {
-    try encoder.write("d");
-    try encoder.writeString("announce");
-    try self.announce.encode(encoder);
-    try encoder.writeString("info");
-    try self.info.encode(encoder);
-    try encoder.write("e");
-}
+// pub fn encode(self: *Self, encoder: *Encoder) !void {
+//     try encoder.write("d");
+//     try encoder.writeString("announce");
+//     try self.announce.encode(encoder);
+//     try encoder.writeString("info");
+//     try self.info.encode(encoder);
+//     try encoder.write("e");
+// }
 
-pub fn decode(decoder: *Decoder, allocator: std.mem.Allocator) !Self {
-    var info: ?Info = null;
-    var announce: ?AnnounceList = null;
-
-    try decoder.skip("d");
-    while (decoder.charsRemaining() and decoder.char() != 'e') {
-        const key = try decoder.readString();
-
-        if (eql(u8, key, "info")) {
-            if (info != null) return Decoder.Error.FieldDefinedTwice;
-            info = try Info.decode(decoder, allocator);
-        } else if (eql(u8, key, "announce")) {
-            if (announce != null)
-                announce = try AnnounceList.decode(decoder, allocator);
-        } else if (eql(u8, key, "announce-list")) {
-            announce = try AnnounceList.decodeList(decoder, allocator);
-        }
-    }
-
-    try decoder.skip("e");
-
-    if (decoder.message.len != decoder.cursor)
-        return Decoder.Error.StringOutOfBounds;
-
-    if (info == null or announce == null)
-        return Decoder.Error.MissingFields;
-
-    return .{
-        .info = info.?,
-        .announce = announce.?,
-    };
-}
+// pub fn decode(decoder: *Decoder, allocator: std.mem.Allocator) !Self {
+//     var info: ?Info = null;
+//     var announce: ?AnnounceList = null;
+//
+//     try decoder.skip("d");
+//     while (decoder.charsRemaining() and decoder.char() != 'e') {
+//         const key = try decoder.readString();
+//
+//         if (eql(u8, key, "info")) {
+//             if (info != null) return Decoder.Error.FieldDefinedTwice;
+//             info = try Info.decode(decoder, allocator);
+//         } else if (eql(u8, key, "announce")) {
+//             if (announce != null)
+//                 announce = try AnnounceList.decode(decoder, allocator);
+//         } else if (eql(u8, key, "announce-list")) {
+//             announce = try AnnounceList.decodeList(decoder, allocator);
+//         }
+//     }
+//
+//     try decoder.skip("e");
+//
+//     if (decoder.message.len != decoder.cursor)
+//         return Decoder.Error.StringOutOfBounds;
+//
+//     if (info == null or announce == null)
+//         return Decoder.Error.MissingFields;
+//
+//     return .{
+//         .info = info.?,
+//         .announce = announce.?,
+//     };
+// }
 
 pub fn getEncodedLength(self: *Self) usize {
     var length: usize = comptime "de".len + calculateEncodedLength("announce") + calculateEncodedLength("info");
@@ -486,5 +468,6 @@ test "real torrent" {
     try file.read(content);
 
     var decoder = try Decoder.init(allocator);
-    var md = try Self.decode(&decoder, allocator);
+    const md = try Self.decode(&decoder, allocator);
+    _ = md;
 }

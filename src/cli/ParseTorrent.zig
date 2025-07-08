@@ -1,7 +1,7 @@
 const std = @import("std");
-const protocol = @import("../protocol.zig");
-const MetaInfo = protocol.MetaInfo;
-const Message = protocol.Message;
+const torzion = @import("torzion");
+const MetaInfo = torzion.MetaInfo;
+const Message = torzion.Message;
 
 const Self = @This();
 

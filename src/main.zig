@@ -1,58 +1,34 @@
 const std = @import("std");
+const cli = @import("zig-cli");
 
-pub const CreateTorrent = @import("cli/CreateTorrent.zig");
-pub const DownloadTorrent = @import("cli/DownloadTorrent.zig");
-pub const ParseTorrent = @import("cli/ParseTorrent.zig");
+const CreateTorrent = @import("./cli/CreateTorrent.zig");
+const DownloadTorrent = @import("./cli/DownloadTorrent.zig");
+const ParseTorrent = @import("./cli/ParseTorrent.zig");
 
-const BitTorrentServer = @import("Server.zig");
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
 
-// Things this tool should do (subcommands)
-// 1. Parse a torrent file and print the details
-// 2. Download a torrent (seed it too?)
-// 3. Persistent seeding of a torrent
-// 4. Start a tracker server
-// 5. Calculate the Info hash of n torrents
+    var runner = try cli.AppRunner.init(allocator);
 
-const CommandChoices = enum {
-    CreateTorrent,
-    DownloadTorrent,
-    ParseTorrent,
-};
+    const app = cli.App{
+        .option_envvar_prefix = "TORZION_",
+        .command = cli.Command{
+            .name = "torzion",
+            .description = cli.Description{
+                .one_line = "torrent management command line tool",
+                .detailed =
+                \\torzion manages torrents
+                ,
+            },
+            .target = cli.CommandTarget{
+                .subcommands = try runner.allocCommands(&.{
+                    try CreateTorrent.command(&runner),
+                }),
+            },
+        },
+    };
 
-const dispatch = std.StaticStringMap(CommandChoices).initComptime(.{
-    .{
-        "create",
-        .CreateTorrent,
-    },
-    .{
-        "download",
-        .DownloadTorrent,
-    },
-    .{
-        "parse",
-        .ParseTorrent,
-    },
-});
-
-fn usage(code: u8) noreturn {
-    const stderr = std.io.getStdErr();
-
-    std.fmt.format(
-        stderr.writer(),
-        \\Usage: torrentz [global options] [subcommand] [options]
-        \\
-        \\Commands:
-        \\  create     create a .torrent file
-        \\  download   download a file using a .torrent file or magnet url
-        \\  parse      print a parsed .torrent file in a specified format
-        \\
-        \\Options:
-        \\  -h, --help show this help message and exit
-    ,
-        .{},
-    ) catch {};
-
-    std.process.exit(code);
+    const action = try runner.getAction(&app);
+    try action();
 }
-
-pub fn main() void {}
