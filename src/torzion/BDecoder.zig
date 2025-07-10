@@ -1,9 +1,15 @@
+//! The decoder owns the message and any allocations made during decoding
+//! It copies the message provided to .init()
+//! Calling .deinit() on a decoder frees both the message and everything it had to allocate during decoding
+
 const std = @import("std");
 const Decoder = @This();
 
 cursor: usize = 0,
 message: []const u8,
-allocator: std.mem.Allocator,
+allocator: std.heap.ArenaAllocator,
+
+// result: anytype??????????
 
 pub const Error = error{
     FormatError,
@@ -18,18 +24,22 @@ pub const Error = error{
 };
 
 pub fn init(message: []const u8, allocator: std.mem.Allocator) !Decoder {
-    const owned_message = try allocator.alloc(u8, message.len);
-    std.mem.copyForwards(u8, owned_message, message);
+    const owned = try allocator.alloc(u8, message.len);
+    std.mem.copyForwards(u8, owned, message);
     return .{
         .cursor = 0,
-        .allocator = allocator,
-        .message = owned_message,
+        .allocator = std.heap.ArenaAllocator.init(allocator),
+        .message = owned,
     };
+}
+
+pub fn deinit(self: *Decoder) void {
+    self.allocator.deinit();
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
-pub fn readString(self: *Decoder) ![]const u8 {
+pub fn decodeString(self: *Decoder) ![]const u8 {
     const start: usize = self.cursor;
     while (self.cursor < self.message.len) : (self.cursor += 1) {
         switch (self.message[self.cursor]) {
@@ -58,7 +68,7 @@ pub fn readString(self: *Decoder) ![]const u8 {
 /// > to -3. Integers have no size limitation. i-0e is invalid. All encodings
 /// > with a leading zero, such as i03e, are invalid, other than i0e, which of
 /// > course corresponds to 0.
-pub fn readInteger(self: *Decoder) !isize {
+pub fn decodeInteger(self: *Decoder) !isize {
     if (self.message[self.cursor] != 'i')
         return Error.FormatError;
 
@@ -88,27 +98,31 @@ pub fn readInteger(self: *Decoder) !isize {
     return std.fmt.parseInt(isize, number, 10);
 }
 
-pub fn readDictionary(self: *Decoder, comptime T: type, allocator: std.mem.Allocator) !@TypeOf(T) {
+pub fn decodeDictionary(self: *Decoder, comptime T: type) !@TypeOf(T) {
     const NullableT = Nullable(T);
     var nullable = NullableT{};
 
     self.skip("d");
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-        const key = try self.readString();
+        const key = try self.decodeString();
 
         _ = std.builtin.Type;
         inline for (std.meta.fields(T)) |field| {
             if (std.mem.eql(u8, key, field.name)) {
-                const fti = @typeInfo(field.type);
-                @field(nullable, field.name) = switch (fti) {
-                    .comptime_int, .int => try self.readInteger(),
-                    .@"struct" => try self.readDictionary(@typeInfo(field.type)),
-                    .array => try self.readlist(fti.array.child, @field(nullable, field.name)[0..fti.array.len]),
-                    .pointer => switch (fti.pointer.size) {
-                        .slice => if (fti.pointer.child == u8) self.readString() else self.readListAlloc(fti.pointer.child, allocator),
-                        else => @compileError("Expected slice, found '" ++ @typeName(fti.pointer.child) ++ "'"),
+                switch (@typeInfo(field.type)) {
+                    // .comptime_int, .int => @field(nullable, field.name) = try self.readInteger(),
+                    // .@"struct" => @field(nullable, field.name) = try self.readDictionary(@typeInfo(field.type)),
+                    .array => |a| try self.decodeList(a.child, @field(nullable, field.name)[0..a.len]),
+                    // .pointer => |p| switch (p.size) {
+                    //     .slice => @field(nullable, field.name) = if (p.child == u8) self.readString() else self.readListAlloc(p.child),
+                    //     else => @compileError("Expected slice, found '" ++ @typeName(p.child) ++ "'"),
+                    // },
+                    .optional => |o| switch (@typeInfo(o.child)) {
+                        .array => |a| try self.decodeList(o.child, @field(nullable, field.name)[0..a.len]),
+                        else => @field(nullable, field.name) = try self.decodeAnyNonArray(o.child),
                     },
+                    else => @field(nullable, field.name) = self.decodeAnyNonArray(field.type),
                     // @"enum": Enum,
                     // @"union": Union,
                     // type: void,
@@ -127,16 +141,17 @@ pub fn readDictionary(self: *Decoder, comptime T: type, allocator: std.mem.Alloc
                     // @"anyframe": AnyFrame,
                     // vector: Vector,
                     // enum_literal: void,
-                    else => @compileError("Expected int, comptime_int, struct, array or pointer; found '" ++ @typeName(field.type) ++ "'"),
-                };
+                }
             }
         }
     }
 
+    self.skip("e");
+
     return unwrapNullable(T, nullable);
 }
 
-pub fn readList(self: *Decoder, comptime T: type, buf: []T) ![]T {
+pub fn decodeList(self: *Decoder, comptime T: type, buf: []T) ![]T {
     self.skip("l");
 
     var i: usize = 0;
@@ -147,22 +162,25 @@ pub fn readList(self: *Decoder, comptime T: type, buf: []T) ![]T {
         const ti = @typeInfo(T);
         switch (ti) {
             .int => {
-                buf[i] = self.readInteger();
+                buf[i] = self.decodeInteger();
             },
             .@"struct" => {
-                buf[i] = self.readDictionary(T, self.allocator);
+                buf[i] = self.decodeDictionary(T, self.allocator);
+            },
+            .optional => |o| {
+                switch (o.child) {}
             },
             .array => {
-                buf[i] = self.readList(ti.array.child, buf);
+                buf[i] = self.decodeList(ti.array.child, buf);
             },
             .pointer => {
                 switch (ti.pointer.size) {
                     .c, .one, .many => @compileError("Expected slice, found '" ++ @typeName(ti.pointer.child) ++ "'"),
                     .slice => {
                         buf[i] = if (ti.pointer.child == u8)
-                            try self.readString()
+                            try self.decodeString()
                         else
-                            try self.readListAlloc(ti.pointer.child, self.allocator);
+                            try self.decodeListAlloc(ti.pointer.child, self.allocator);
                     },
                 }
             },
@@ -174,26 +192,49 @@ pub fn readList(self: *Decoder, comptime T: type, buf: []T) ![]T {
     return buf;
 }
 
-pub fn readListAlloc(self: *Decoder, comptime T: type, allocator: std.mem.Allocator) ![]T {
-    const list = std.ArrayList(T).init(allocator);
+pub fn decodeListAlloc(self: *Decoder, comptime T: type) ![]T {
+    const list = std.ArrayList(T).init(self.allocator);
 
     self.skip("l");
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
 
         switch (@typeInfo(T)) {
-            .int, .float => {
-                const number = try self.readInteger();
-                list.append(number);
+            .array => |a| {
+                const array: [a.len]a.child = undefined;
+                try self.decodeList(a.child, array[0..a.len]);
+                try list.append(array);
             },
-            .@"struct" => {
-                const dict = try self.readDictionary(T);
-                list.append(dict);
+            .optional => |o| {
+                switch (@typeInfo(o.child)) {
+                    .array => |a| {
+                        const array: [a.len]a.child = undefined;
+                        try self.decodeList(a.child, array[0..a.len]);
+                        try list.append(array);
+                    },
+                    else => try list.append(try self.decodeAnyNonArray(o.child)),
+                }
             },
+            else => try list.append(try self.decodeAnyNonArray(T)),
         }
     }
 
     return try list.toOwnedSlice();
+}
+
+pub fn decodeAnyNonArray(self: *Decoder, comptime T: type) !T {
+    return switch (@typeInfo(T)) {
+        .comptime_int, .int => try self.decodeInteger(),
+        .@"struct" => try self.decodeDictionary(T),
+        .optional => |o| switch (@typeInfo(o.child)) {
+            .array => @compileError("can't read this way"),
+            else => try self.decodeAnyNonArray(o.child),
+        },
+        .pointer => |p| switch (p.size) {
+            .slice => if (p.child == u8) try self.decodeString() else try self.decodeListAlloc(p.child, self.allocator),
+            else => @compileError("Unsupported pointer type '" ++ @typeName(p.child) ++ "'"),
+        },
+    };
 }
 
 fn Nullable(comptime T: type) type {
