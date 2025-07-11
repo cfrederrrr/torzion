@@ -98,7 +98,7 @@ pub fn decodeInteger(self: *Decoder) !isize {
     return std.fmt.parseInt(isize, number, 10);
 }
 
-pub fn decodeDictionary(self: *Decoder, comptime T: type) !@TypeOf(T) {
+pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
     const NullableT = Nullable(T);
     var nullable = NullableT{};
 
@@ -107,131 +107,63 @@ pub fn decodeDictionary(self: *Decoder, comptime T: type) !@TypeOf(T) {
         if (self.char() == 'e') break;
         const key = try self.decodeString();
 
-        _ = std.builtin.Type;
         inline for (std.meta.fields(T)) |field| {
-            if (std.mem.eql(u8, key, field.name)) {
-                switch (@typeInfo(field.type)) {
-                    // .comptime_int, .int => @field(nullable, field.name) = try self.readInteger(),
-                    // .@"struct" => @field(nullable, field.name) = try self.readDictionary(@typeInfo(field.type)),
-                    .array => |a| try self.decodeList(a.child, @field(nullable, field.name)[0..a.len]),
-                    // .pointer => |p| switch (p.size) {
-                    //     .slice => @field(nullable, field.name) = if (p.child == u8) self.readString() else self.readListAlloc(p.child),
-                    //     else => @compileError("Expected slice, found '" ++ @typeName(p.child) ++ "'"),
-                    // },
-                    .optional => |o| switch (@typeInfo(o.child)) {
-                        .array => |a| try self.decodeList(o.child, @field(nullable, field.name)[0..a.len]),
-                        else => @field(nullable, field.name) = try self.decodeAnyNonArray(o.child),
-                    },
-                    else => @field(nullable, field.name) = self.decodeAnyNonArray(field.type),
-                    // @"enum": Enum,
-                    // @"union": Union,
-                    // type: void,
-                    // void: void,
-                    // bool: void,
-                    // noreturn: void,
-                    // comptime_float: void,
-                    // undefined: void,
-                    // null: void,
-                    // optional: Optional,
-                    // error_union: ErrorUnion,
-                    // error_set: ErrorSet,
-                    // @"fn": Fn,
-                    // @"opaque": Opaque,
-                    // frame: Frame,
-                    // @"anyframe": AnyFrame,
-                    // vector: Vector,
-                    // enum_literal: void,
-                }
-            }
+            if (std.mem.eql(u8, key, field.name))
+                @field(nullable, field.name) = try self.decodeAny(field.type);
         }
     }
 
     self.skip("e");
-
-    return unwrapNullable(T, nullable);
+    return try unwrapNullable(T, nullable);
 }
 
-pub fn decodeList(self: *Decoder, comptime T: type, buf: []T) ![]T {
-    self.skip("l");
+pub fn decodeArray(self: *Decoder, comptime Array: type) Array {
+    const info = @typeInfo(Array);
+    if (info != .array) @compileError("decodeArray only works with arrays");
+    var array: Array = undefined;
+
+    if (info.array.child == u8) {
+        const string = try self.decodeString();
+        if (string.len != array.len) return Error.InvalidValue;
+        for (0..string.len) |i| array[i] = string[i];
+        return array;
+    }
+
+    try self.skip("l");
 
     var i: usize = 0;
     while (self.charsRemaining()) : (i += 1) {
         if (self.char() == 'e') break;
-        if (i >= buf.len) return Error.TooManyElements;
-
-        const ti = @typeInfo(T);
-        switch (ti) {
-            .int => {
-                buf[i] = self.decodeInteger();
-            },
-            .@"struct" => {
-                buf[i] = self.decodeDictionary(T, self.allocator);
-            },
-            .optional => |o| {
-                switch (o.child) {}
-            },
-            .array => {
-                buf[i] = self.decodeList(ti.array.child, buf);
-            },
-            .pointer => {
-                switch (ti.pointer.size) {
-                    .c, .one, .many => @compileError("Expected slice, found '" ++ @typeName(ti.pointer.child) ++ "'"),
-                    .slice => {
-                        buf[i] = if (ti.pointer.child == u8)
-                            try self.decodeString()
-                        else
-                            try self.decodeListAlloc(ti.pointer.child, self.allocator);
-                    },
-                }
-            },
-        }
+        if (i >= array.len) return Error.TooManyElements;
+        array[i] = self.decodeAny(info.array.child);
     }
 
-    self.skip("e");
-
-    return buf;
+    try self.skip("e");
+    return array;
 }
 
-pub fn decodeListAlloc(self: *Decoder, comptime T: type) ![]T {
+pub fn decodeSlice(self: *Decoder, comptime T: type) ![]T {
     const list = std.ArrayList(T).init(self.allocator);
 
     self.skip("l");
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-
-        switch (@typeInfo(T)) {
-            .array => |a| {
-                const array: [a.len]a.child = undefined;
-                try self.decodeList(a.child, array[0..a.len]);
-                try list.append(array);
-            },
-            .optional => |o| {
-                switch (@typeInfo(o.child)) {
-                    .array => |a| {
-                        const array: [a.len]a.child = undefined;
-                        try self.decodeList(a.child, array[0..a.len]);
-                        try list.append(array);
-                    },
-                    else => try list.append(try self.decodeAnyNonArray(o.child)),
-                }
-            },
-            else => try list.append(try self.decodeAnyNonArray(T)),
-        }
+        const item = self.decodeAny(T);
+        try list.append(item);
     }
 
+    self.skip("l");
     return try list.toOwnedSlice();
 }
 
-pub fn decodeAnyNonArray(self: *Decoder, comptime T: type) !T {
+pub fn decodeAny(self: *Decoder, comptime T: type) !T {
     return switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(),
-        .@"struct" => try self.decodeDictionary(T),
-        .optional => |o| switch (@typeInfo(o.child)) {
-            .array => @compileError("can't read this way"),
-            else => try self.decodeAnyNonArray(o.child),
-        },
+        .@"struct" => try self.decodeStruct(T),
+        .array => try self.decodeArray(T),
+        .optional => |o| try self.decodeAny(o.child),
         .pointer => |p| switch (p.size) {
-            .slice => if (p.child == u8) try self.decodeString() else try self.decodeListAlloc(p.child, self.allocator),
+            .slice => if (p.child == u8) try self.decodeString() else try self.decodeListAlloc(p.child),
             else => @compileError("Unsupported pointer type '" ++ @typeName(p.child) ++ "'"),
         },
     };
