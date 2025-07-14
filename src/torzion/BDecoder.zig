@@ -98,6 +98,12 @@ pub fn decodeInteger(self: *Decoder) !isize {
     return std.fmt.parseInt(isize, number, 10);
 }
 
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Dictionaries are encoded as a 'd' followed by a list of alternating keys
+/// > and their corresponding values followed by an 'e'. For example,
+/// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
+/// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
+/// > and appear in sorted order (sorted as raw strings, not alphanumerics).
 pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
     const NullableT = Nullable(T);
     var nullable = NullableT{};
@@ -117,6 +123,10 @@ pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
     return try unwrapNullable(T, nullable);
 }
 
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
+/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
+/// > ['spam', 'eggs'].
 pub fn decodeArray(self: *Decoder, comptime Array: type) Array {
     const info = @typeInfo(Array);
     if (info != .array) @compileError("decodeArray only works with arrays");
@@ -142,30 +152,38 @@ pub fn decodeArray(self: *Decoder, comptime Array: type) Array {
     return array;
 }
 
-pub fn decodeSlice(self: *Decoder, comptime T: type) ![]T {
-    const list = std.ArrayList(T).init(self.allocator);
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
+/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
+/// > ['spam', 'eggs'].
+pub fn decodeSlice(self: *Decoder, comptime Slice: type) !Slice {
+    const info = @typeInfo(Slice);
+    if (info != .pointer and info.pointer.size != .slice) @compileError("decodeSlice only works with slices");
 
-    self.skip("l");
+    if (info.pointer.child == u8) return self.decodeString();
+
+    try self.skip("l");
+
+    var list = std.ArrayList(info.pointer.child).init(self.allocator);
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-        const item = self.decodeAny(T);
+        const item = self.decodeAny(info.pointer.child);
         try list.append(item);
     }
 
-    self.skip("l");
+    try self.skip("e");
     return try list.toOwnedSlice();
 }
 
+/// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 pub fn decodeAny(self: *Decoder, comptime T: type) !T {
     return switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(),
         .@"struct" => try self.decodeStruct(T),
         .array => try self.decodeArray(T),
         .optional => |o| try self.decodeAny(o.child),
-        .pointer => |p| switch (p.size) {
-            .slice => if (p.child == u8) try self.decodeString() else try self.decodeListAlloc(p.child),
-            else => @compileError("Unsupported pointer type '" ++ @typeName(p.child) ++ "'"),
-        },
+        .pointer => |p| if (p.size == .slice) try self.decodeSlice(p.child) else @compileError("Unsupported pointer type '" ++ @typeName(p.child) ++ "'"),
+        else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
     };
 }
 

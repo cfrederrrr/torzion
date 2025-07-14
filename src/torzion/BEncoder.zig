@@ -8,19 +8,15 @@ allocator: std.mem.Allocator,
 
 const Encoder = @This();
 
-const WriteError = error{
-    OutofMemory,
-};
-
 pub const Error = error{
     StringCannotBeEmpty,
 };
 
 pub fn init(allocator: std.mem.Allocator) !Encoder {
-    const buffer = try allocator.alloc(u8, std.heap.pageSize());
+    const buffer = try allocator.alloc(u8, pageSize());
     return .{
         .allocator = allocator,
-        .buffer = buffer,
+        .message = buffer,
     };
 }
 
@@ -29,7 +25,7 @@ pub fn deinit(self: *Encoder) void {
 }
 
 pub fn ensureCapacity(self: *Encoder, len: usize) !void {
-    if (self.cursor + len > self.message.len) {
+    if (self.cursor + len >= self.message.len) {
         const new_len = self.message.len + (1 + len / pageSize()) * pageSize();
         self.message = try self.allocator.realloc(self.message, new_len);
     }
@@ -43,22 +39,22 @@ pub fn write(self: *Encoder, bytes: []const u8) !void {
 
 fn writeDigits(self: *Encoder, number: usize) !void {
     if (number < 10) {
-        self.ensureCapacity(1);
-        self.message[self.cursor] = number + '0';
+        try self.ensureCapacity(1);
+        self.message[self.cursor] = @as(u8, @truncate(number)) + '0';
         self.cursor += 1;
         return;
     }
 
     const len: usize = 1 + log10(number);
-    self.ensureCapacity(len);
+    try self.ensureCapacity(len);
 
-    const buffer = self.message[self.cursor .. self.cursor + len];
-    var countdown: usize = buffer.len;
+    const substr = self.message[self.cursor .. self.cursor + len];
+    var countdown: usize = substr.len;
 
     var num: usize = number;
     while (num != 0) : (num /= 10) {
         countdown -= 1;
-        buffer[countdown] = @as(u8, @truncate(num % 10)) + '0';
+        substr[countdown] = @as(u8, @truncate(num % 10)) + '0';
     }
 
     std.debug.assert(countdown == 0);
@@ -74,51 +70,39 @@ pub fn encodeString(self: *Encoder, string: []const u8) !void {
     try self.write(string);
 }
 
-pub fn encodeInteger(self: *Encoder, integer: isize) !void {
-    const number: usize = @abs(integer);
+pub fn encodeInteger(self: *Encoder, integer: anytype) !void {
+    const T = @TypeOf(integer);
+
+    const number: usize = switch (@typeInfo(T)) {
+        .int => |i| switch (i.signedness) {
+            .signed => @abs(integer),
+            .unsigned => integer,
+        },
+        else => @compileError("can't encode '" ++ @typeName(T) ++ "' as int"),
+    };
+
+    // const number: usize = @abs(integer);
 
     try self.write("i");
-    if (integer < 0)
-        try self.write("-");
-
+    if (integer < 0) try self.write("-");
     try self.writeDigits(number);
     try self.write("e");
 }
 
-pub fn encodeDictionary(self: *Encoder, comptime T: type, dict: T) !void {
+pub fn encodeStruct(self: *Encoder, comptime T: type, dict: T) !void {
     try self.write("d");
 
     inline for (std.meta.fields(T)) |field| {
-        const value = @field(dict, field.name);
-
         switch (@typeInfo(field.type)) {
-            .comptime_int, .int => {
-                try self.encodeString(field.name);
-                try self.encodeInteger(value);
-            },
-            .@"struct" => {
-                try self.encodeString(field.name);
-                try self.encodeDictionary(field.type, value);
-            },
-            .array => |a| {
-                try self.encodeString(field.name);
-                if (a.child == u8) try self.encodeString(value) else try self.encodeList(field.type, value);
-            },
-            .pointer => |p| {
-                try self.encodeString(field.name);
-                switch (p.size) {
-                    .slice => if (p.child == u8) try self.encodeString(value) else try self.encodeList(field.type, value),
-                    else => @compileError("Unsupported pointer type provided '" ++ @typeName(field.type) ++ "'"),
-                }
-            },
             .optional => {
-                if (value) |v| {
-                    self.encodeString(field.name);
+                if (@field(dict, field.name)) |v| {
+                    try self.encodeString(field.name);
                     try self.encodeAny(v);
                 }
             },
             else => {
-                @compileError("Non bencodable type provided '" ++ @typeName(field.type) ++ "'");
+                try self.encodeString(field.name);
+                try self.encodeAny(@field(dict, field.name));
             },
         }
     }
@@ -126,25 +110,42 @@ pub fn encodeDictionary(self: *Encoder, comptime T: type, dict: T) !void {
     try self.write("e");
 }
 
-pub fn encodeList(self: *Encoder, comptime T: type, list: []T) !void {
+pub fn encodeSlice(self: *Encoder, slice: anytype) !void {
+    const Slice = @TypeOf(slice);
+    const info = @typeInfo(Slice);
+    if (info != .pointer and info.pointer.size != .slice) @compileError("encodeSlice only works with slice types");
+    if (info.pointer.child == u8) return try self.encodeString(slice);
     try self.write("l");
-    for (list) |t| self.encodeAny(t);
+    for (slice) |s| try self.encodeAny(s);
     try self.write("e");
 }
 
-pub fn encodeAny(self: *Encoder, t: anytype) !void {
-    const T = @TypeOf(t);
+pub fn encodeArray(self: *Encoder, array: anytype) !void {
+    const Array = @TypeOf(array);
+    const info = @typeInfo(Array);
+    if (info != .array) @compileError("encodeArray only works with Array types");
+    if (info.array.child == u8) return try self.encodeString(array[0..array.len]);
+    try self.write("l");
+    for (array) |a| self.encodeAny(a);
+    try self.write("e");
+}
+
+pub fn encodeAny(self: *Encoder, any: anytype) !void {
+    const T = @TypeOf(any);
 
     switch (@typeInfo(T)) {
-        .comptime_int, .int => try self.encodeInteger(t),
-        .@"struct" => try self.encodeDictionary(T, t),
-        .optional => if (t) |v| self.encodeAny(v),
-        .array => |a| if (a.child == u8) try self.encodeString(t) else try self.encodeList(a.child, t),
-        .pointer => |p| switch (p.size) {
-            .slice => if (p.child == u8) try self.encodeString(t) else try self.encodeList(p.child, t),
-            else => @compileError("Non bencodable type provided '" ++ @typeName(T) ++ "'"),
-        },
+        .int => try self.encodeInteger(any),
+        .@"struct" => try self.encodeStruct(T, any),
+        .array => try self.encodeArray(any),
+        .optional => if (any) |v| self.encodeAny(v),
+        .pointer => try self.encodeSlice(any),
+        .bool => try self.encodeAny(@as(usize, if (any) 1 else 0)),
+        else => @compileError("Non bencodable type provided '" ++ @typeName(T) ++ "'"),
     }
+}
+
+pub fn result(self: *Encoder) []u8 {
+    return self.message[0..self.cursor];
 }
 
 test "Encoder.write" {
@@ -160,7 +161,6 @@ test "Encoder.write" {
 
     try encoder.write("e");
     std.testing.expect(std.mem.eql(u8, encoder.buffer, "d3:keyi12345ee")) catch |e| {
-        std.debug.print("expected 'd1:ai12345ee'\n     got '{s}' instead", .{encoder.buffer});
         return e;
     };
 }
