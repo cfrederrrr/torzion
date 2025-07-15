@@ -68,7 +68,7 @@ pub fn decodeString(self: *Decoder) ![]const u8 {
 /// > to -3. Integers have no size limitation. i-0e is invalid. All encodings
 /// > with a leading zero, such as i03e, are invalid, other than i0e, which of
 /// > course corresponds to 0.
-pub fn decodeInteger(self: *Decoder) !isize {
+pub fn decodeInteger(self: *Decoder, comptime T: type) !T {
     if (self.message[self.cursor] != 'i')
         return Error.FormatError;
 
@@ -95,7 +95,7 @@ pub fn decodeInteger(self: *Decoder) !isize {
     if (self.cursor > 3 and number[0] == '0')
         return Error.FormatError;
 
-    return std.fmt.parseInt(isize, number, 10);
+    return std.fmt.parseInt(T, number, 10);
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -104,11 +104,11 @@ pub fn decodeInteger(self: *Decoder) !isize {
 /// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
 /// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
 /// > and appear in sorted order (sorted as raw strings, not alphanumerics).
-pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
+pub fn decodeStruct(self: *Decoder, comptime T: type) !T {
     const NullableT = Nullable(T);
     var nullable = NullableT{};
 
-    self.skip("d");
+    try self.skip("d");
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
         const key = try self.decodeString();
@@ -119,7 +119,7 @@ pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
         }
     }
 
-    self.skip("e");
+    try self.skip("e");
     return try unwrapNullable(T, nullable);
 }
 
@@ -127,7 +127,7 @@ pub fn decodeStruct(self: *Decoder, comptime T: type) !@TypeOf(T) {
 /// > Lists are encoded as an 'l' followed by their elements (also bencoded)
 /// > followed by an 'e'. For example l4:spam4:eggse corresponds to
 /// > ['spam', 'eggs'].
-pub fn decodeArray(self: *Decoder, comptime Array: type) Array {
+pub fn decodeArray(self: *Decoder, comptime Array: type) !Array {
     const info = @typeInfo(Array);
     if (info != .array) @compileError("decodeArray only works with arrays");
     var array: Array = undefined;
@@ -158,16 +158,17 @@ pub fn decodeArray(self: *Decoder, comptime Array: type) Array {
 /// > ['spam', 'eggs'].
 pub fn decodeSlice(self: *Decoder, comptime Slice: type) !Slice {
     const info = @typeInfo(Slice);
-    if (info != .pointer and info.pointer.size != .slice) @compileError("decodeSlice only works with slices");
+    if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
 
-    if (info.pointer.child == u8) return self.decodeString();
+    if (info.pointer.child == u8)
+        return try self.decodeString();
 
     try self.skip("l");
 
-    var list = std.ArrayList(info.pointer.child).init(self.allocator);
+    var list = std.ArrayList(info.pointer.child).init(self.allocator.allocator());
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-        const item = self.decodeAny(info.pointer.child);
+        const item = try self.decodeAny(info.pointer.child);
         try list.append(item);
     }
 
@@ -175,14 +176,20 @@ pub fn decodeSlice(self: *Decoder, comptime Slice: type) !Slice {
     return try list.toOwnedSlice();
 }
 
+pub fn decodeBool(self: *Decoder) !bool {
+    const num = try self.decodeInteger(usize);
+    return if (num == 1) true else if (num == 0) false else error.InvalidValue;
+}
+
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 pub fn decodeAny(self: *Decoder, comptime T: type) !T {
     return switch (@typeInfo(T)) {
-        .comptime_int, .int => try self.decodeInteger(),
+        .comptime_int, .int => try self.decodeInteger(T),
         .@"struct" => try self.decodeStruct(T),
         .array => try self.decodeArray(T),
         .optional => |o| try self.decodeAny(o.child),
-        .pointer => |p| if (p.size == .slice) try self.decodeSlice(p.child) else @compileError("Unsupported pointer type '" ++ @typeName(p.child) ++ "'"),
+        .pointer => try self.decodeSlice(T),
+        .bool => try self.decodeBool(),
         else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
     };
 }

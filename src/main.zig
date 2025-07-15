@@ -3,6 +3,7 @@ const cli = @import("zig-cli");
 
 const CreateTorrent = @import("./cli/CreateTorrent.zig");
 const DownloadTorrent = @import("./cli/DownloadTorrent.zig");
+const InspectTorrent = @import("./cli/InspectTorrent.zig");
 const ParseTorrent = @import("./cli/ParseTorrent.zig");
 
 pub fn main() !void {
@@ -24,6 +25,7 @@ pub fn main() !void {
             .target = cli.CommandTarget{
                 .subcommands = try runner.allocCommands(&.{
                     try CreateTorrent.command(&runner),
+                    try InspectTorrent.command(&runner),
                 }),
             },
         },

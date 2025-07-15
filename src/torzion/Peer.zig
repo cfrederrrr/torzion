@@ -251,7 +251,7 @@ test "Packet" {
     try std.testing.expect(std.mem.eql(u8, packet.data, "something"));
 }
 
-const SHA1Hash = [32]u8;
+const SHA1Hash = [20]u8;
 
 const Handshake = struct {
     const BittorrentProtocol = "BitTorrent protocol";

@@ -29,5 +29,5 @@ announce: ?[]const u8,
 /// second outer list are tiers, ranked in reverse order of their index
 /// the innermost lists are the actual bytes comprising the strings
 /// see https://www.bittorrent.org/beps/bep_0012.html
-@"announce-list": ?[][][]u8 = null,
+@"announce-list": ?[][][]const u8 = null,
 info: Info,
