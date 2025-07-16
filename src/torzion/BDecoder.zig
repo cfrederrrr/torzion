@@ -161,7 +161,7 @@ pub fn decodeSlice(self: *Decoder, comptime Slice: type) !Slice {
     if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
 
     if (info.pointer.child == u8)
-        return try self.decodeString();
+        return self.decodeString();
 
     try self.skip("l");
 

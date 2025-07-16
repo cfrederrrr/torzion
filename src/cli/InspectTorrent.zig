@@ -55,7 +55,11 @@ pub fn run() !void {
 
     var decoder = try torzion.BDecoder.init(fc, allocator);
     defer decoder.deinit();
-    const torrent = try decoder.decodeAny(torzion.MetaInfo);
+    const torrent = decoder.decodeAny(torzion.MetaInfo) catch |e| switch (e) {
+        torzion.BDecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        torzion.BDecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        else => return e,
+    };
 
     const stdout = std.io.getStdOut().writer();
 
@@ -66,7 +70,7 @@ pub fn run() !void {
         _ = try std.fmt.format(stdout, "announce-list: {s}\n", .{announce});
 
     _ = try stdout.write("info:\n");
-    _ = try std.fmt.format(stdout, "  name: {d}\n", .{torrent.info.name});
+    _ = try std.fmt.format(stdout, "  name: {s}\n", .{torrent.info.name});
     _ = try std.fmt.format(stdout, "  piece length: {d}\n", .{torrent.info.@"piece length"});
 
     if (torrent.info.files) |files| {

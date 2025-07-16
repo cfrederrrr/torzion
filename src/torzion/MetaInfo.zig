@@ -1,7 +1,7 @@
 pub const Info = struct {
     pub const File = struct {
         length: usize,
-        path: []const u8,
+        path: [][]const u8,
     };
 
     name: []const u8,
@@ -17,7 +17,7 @@ pub const Info = struct {
     ///
     /// also, 0x100000 = 1MiB piece length
     @"piece length": usize = 0x100000,
-    pieces: [][20]u8,
+    pieces: []const u8,
     length: ?usize = null,
     files: ?[]File = null,
     private: bool = false,

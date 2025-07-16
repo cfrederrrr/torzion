@@ -120,13 +120,22 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
         }
 
         const stat = try dir.statFile(entry.path); // catch die("couldn't stat file {s}", .{entry.path}, 1);
+
         content_end += stat.size;
         contents = try allocator.realloc(contents, content_end + stat.size + (stat.size % piece_length));
         _ = try dir.readFile(entry.path, contents[content_end..]);
-        const filepath = try allocator.alloc(u8, entry.path.len);
-        std.mem.copyForwards(u8, filepath, entry.path);
-        try directory.append(.{ .length = stat.size, .path = filepath });
-        // directory[count] = .{ .length = stat.size, .path = entry.path };
+
+        const path_segments = try allocator.alloc([]const u8, entry.path.len);
+
+        var i: usize = 0;
+        var it = std.mem.splitAny(u8, entry.path, &[_]u8{std.fs.path.sep});
+        while (it.next()) |p| {
+            path_segments[i] = p;
+            i += 1;
+        }
+
+        try directory.append(.{ .length = stat.size, .path = path_segments });
+
         count += 1;
     }
 
@@ -136,14 +145,16 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
     std.crypto.utils.secureZero(u8, contents[content_end..]);
 
     const piece_count = 1 + contents.len / piece_length;
-    const pieces = try allocator.alloc([20]u8, piece_count);
+    const pieces = try allocator.alloc(u8, 20 * piece_count);
 
     var i: usize = 0;
     while (i < piece_count) : (i += 1) {
         const begin = i * piece_length;
         const finish = begin + if (contents.len < piece_length) contents.len else piece_length;
         const chunk = contents[begin..finish];
-        std.crypto.hash.Sha1.hash(chunk, &pieces[i], .{});
+        var piece: [20]u8 = undefined;
+        std.crypto.hash.Sha1.hash(chunk, &piece, .{});
+        std.mem.copyForwards(u8, pieces[i * 20 .. 20 + i * 20], piece[0..]);
     }
 
     const files = try directory.toOwnedSlice();
@@ -173,12 +184,14 @@ fn makeTorrentFromFile(allocator: std.mem.Allocator) !MetaInfo {
 
     // WARN: is this math right?
     const piece_count = content_len / piece_length;
-    const pieces = allocator.alloc([20]u8, piece_count) catch |e| die("{s}", .{@errorName(e)}, 1);
+    const pieces = allocator.alloc(u8, 20 * piece_count) catch |e| die("{s}", .{@errorName(e)}, 1);
 
     var i: usize = 0;
     while (i < piece_length) : (i += 1) {
         const chunk = contents[i * (piece_length) .. (i * (piece_length)) + piece_length];
-        std.crypto.hash.Sha1.hash(chunk, &pieces[i], .{});
+        var piece: [20]u8 = undefined;
+        std.crypto.hash.Sha1.hash(chunk, &piece, .{});
+        std.mem.copyForwards(u8, pieces[i * 20 .. 20 + i * 20], piece[0..]);
     }
 
     return .{
