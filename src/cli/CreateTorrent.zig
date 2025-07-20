@@ -126,9 +126,10 @@ fn makeTorrentFromDir(allocator: Allocator) !MetaInfo {
         _ = try dir.readFile(entry.path, contents[content_end..]);
 
         const path_segments = try allocator.alloc([]const u8, entry.path.len);
+        defer allocator.free(path_segments);
 
         var i: usize = 0;
-        var it = std.mem.splitAny(u8, entry.path, &[_]u8{std.fs.path.sep});
+        var it = std.mem.splitScalar(u8, entry.path, @as(u8, std.fs.path.sep));
         while (it.next()) |p| {
             path_segments[i] = p;
             i += 1;
@@ -227,7 +228,6 @@ pub fn run() !void {
         die("couldn't open file {s} for for writing: {s}", .{ out, @errorName(err) }, 1);
 
     defer outfile.close();
-
     try encoder.encodeAny(torrent);
     try outfile.writeAll(encoder.result());
 }
