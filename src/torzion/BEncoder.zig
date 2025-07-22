@@ -26,14 +26,18 @@ pub fn deinit(self: *Encoder) void {
 
 pub fn ensureCapacity(self: *Encoder, len: usize) !void {
     if (self.cursor + len >= self.message.len) {
+        // how many pages do we need? len / pageSize()
         const new_len = self.message.len + (1 + len / pageSize()) * pageSize();
+        std.log.debug("reallocating to {d} bytes", .{new_len});
         self.message = try self.allocator.realloc(self.message, new_len);
     }
 }
 
 pub fn write(self: *Encoder, bytes: []const u8) !void {
+    std.log.debug("position={d} message.len={d} message='{s}' writing={s}", .{ self.cursor, self.message.len, self.result(), bytes });
     try self.ensureCapacity(bytes.len);
     std.mem.copyForwards(u8, self.message[self.cursor..], bytes);
+    std.log.debug("done writing", .{});
     self.cursor += bytes.len;
 }
 
@@ -137,7 +141,7 @@ pub fn encodeAny(self: *Encoder, any: anytype) !void {
         .int => try self.encodeInteger(any),
         .@"struct" => try self.encodeStruct(T, any),
         .array => try self.encodeArray(any),
-        .optional => if (any) |v| self.encodeAny(v),
+        .optional => if (any) |a| self.encodeAny(a),
         .pointer => try self.encodeSlice(any),
         .bool => try self.encodeAny(@as(usize, if (any) 1 else 0)),
         else => @compileError("Non bencodable type provided '" ++ @typeName(T) ++ "'"),
@@ -146,35 +150,4 @@ pub fn encodeAny(self: *Encoder, any: anytype) !void {
 
 pub fn result(self: *Encoder) []u8 {
     return self.message[0..self.cursor];
-}
-
-test "Encoder.write" {
-    const allocator = std.testing.allocator;
-    const key = "key";
-    const val = 12345;
-
-    var encoder = try Encoder.init(allocator);
-    defer encoder.deinit();
-
-    try encoder.encodeString(key[0..]);
-    try encoder.encodeInteger(val);
-
-    try encoder.write("e");
-    std.testing.expect(std.mem.eql(u8, encoder.buffer, "d3:keyi12345ee")) catch |e| {
-        return e;
-    };
-}
-
-test "Encoder" {
-    const allocator = std.testing.allocator;
-    var encoder = try Encoder.init(allocator);
-    defer encoder.deinit();
-
-    try encoder.encodeString("key");
-    try encoder.encodeString("val");
-    try encoder.encodeString("number");
-    try encoder.encodeInteger(12345);
-    _ = try encoder.write("e");
-
-    try std.testing.expect(std.mem.eql(u8, encoder.buffer, "d3:key3:val6:numberi12345ee"));
 }

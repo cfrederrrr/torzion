@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const builtin = @import("builtin");
 const cli = @import("zig-cli");
 const clitools = @import("tools.zig");
 const help = clitools.help;
@@ -8,8 +9,6 @@ const streql = clitools.streql;
 
 const torzion = @import("torzion");
 const MetaInfo = torzion.MetaInfo;
-
-const Allocator = std.mem.Allocator;
 
 const exit = std.process.exit;
 const log = std.log;
@@ -44,8 +43,13 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
 }
 
 pub fn run() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    const allocator = blk: switch (builtin.mode) {
+        .Debug => {
+            var dba = std.heap.DebugAllocator(.{}).init;
+            break :blk dba.allocator();
+        },
+        else => std.heap.smp_allocator,
+    };
 
     const wd = std.fs.cwd();
     const stat = try wd.statFile(path);
@@ -62,12 +66,17 @@ pub fn run() !void {
     };
 
     const stdout = std.io.getStdOut().writer();
+    _ = try stdout.write("got here");
 
     if (torrent.announce) |announce|
         _ = try std.fmt.format(stdout, "announce: {s}\n", .{announce});
 
-    if (torrent.@"announce-list") |announce|
-        _ = try std.fmt.format(stdout, "announce-list: {s}\n", .{announce});
+    if (torrent.@"announce-list") |list| {
+        _ = try stdout.write("announce-list:\n");
+        for (list) |tier| {
+            for (tier) |announce| _ = try std.fmt.format(stdout, "  - {s}\n", .{announce});
+        }
+    }
 
     _ = try stdout.write("info:\n");
     _ = try std.fmt.format(stdout, "  name: {s}\n", .{torrent.info.name});
@@ -76,7 +85,9 @@ pub fn run() !void {
     if (torrent.info.files) |files| {
         _ = try stdout.write("  files:\n");
         for (files) |file| {
-            _ = try std.fmt.format(stdout, "  - path: {s}\n", .{file.path});
+            const pretty_path = try std.mem.join(allocator, "/", file.path);
+            _ = try std.fmt.format(stdout, "  - path: {s}\n", .{pretty_path});
+            allocator.free(pretty_path);
             _ = try std.fmt.format(stdout, "  - length: {d}\n", .{file.length});
         }
     }
@@ -84,12 +95,6 @@ pub fn run() !void {
     if (torrent.info.length) |length| {
         try std.fmt.format(stdout, "  length: {d}", .{length});
     }
-
-    // \\     pieces:       {d}
-    // \\     private:      {any}
-    //
-    var encoder = try torzion.BEncoder.init(allocator);
-    defer encoder.deinit();
 }
 
 pub fn action() anyerror!void {
