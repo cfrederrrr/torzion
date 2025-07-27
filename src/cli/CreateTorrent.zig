@@ -32,6 +32,7 @@ var path: []const u8 = undefined;
 var piece_length: usize = 0x100000;
 var announce: []const u8 = undefined;
 var out: ?[]const u8 = null;
+var private: bool = false;
 
 const InputError = error{
     PathUndefined,
@@ -74,6 +75,13 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
                 .help = "Output .torrent file",
                 .value_name = "STR",
             },
+            cli.Option{
+                .short_alias = 'p',
+                .long_name = "private",
+                .required = false,
+                .value_ref = runner.mkRef(&private),
+                .help = "Whether the torrent should be marked private - default is false",
+            },
         }),
         .target = cli.CommandTarget{
             .action = cli.CommandAction{
@@ -96,18 +104,20 @@ pub fn run() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    const torrent = try torzion.MetaInfo.createArchive(allocator, path, announce, false, piece_length);
+    var torrent = torzion.createTorrent(allocator, path, announce, false, piece_length) catch die("Failed to create torrent", .{}, 1);
+    var encoder = torzion.encodeTorrent(allocator, torrent) catch die("Failed to encode torrent", .{}, 1);
 
-    var encoder = try torzion.BEncoder.init(allocator);
-    defer encoder.deinit();
+    defer {
+        torrent.deinit(allocator);
+        encoder.deinit();
+    }
 
-    std.log.debug("{any}", .{torrent.info.files});
-
-    try encoder.encodeAny(torrent);
     if (out) |o| {
         const wd = std.fs.cwd();
-        const outfile = wd.createFile(o, .{}) catch |err| die("couldn't open file {s} for for writing: {s}", .{ o, @errorName(err) }, 1);
-        try outfile.writeAll(encoder.result());
+        const outfile = wd.createFile(o, .{}) catch |err|
+            die("couldn't open file {s} for for writing: {s}", .{ o, @errorName(err) }, 1);
+        outfile.writeAll(encoder.result()) catch |err|
+            die("couldn't write to file {s}: {s}", .{ o, @errorName(err) }, 1);
         outfile.close();
     } else {
         const stdout = std.io.getStdOut().writer();

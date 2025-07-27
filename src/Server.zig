@@ -1,8 +1,9 @@
 const std = @import("std");
 const net = std.net;
-const protocol = @import("protocol");
 
-const Thread = std.Thread;
+const torzion = @import("torzion.zig");
+
+const Peer = torzion.Peer;
 
 address: net.Address = net.Address.parseIp("0.0.0.0", 6681),
 
@@ -32,8 +33,10 @@ pub fn start(self: *Self) !void {
             }
         };
 
-        connection.stream;
         std.log.debug("incoming connection {s}:{s} established", .{connection.address});
+        var peer = Peer.handshake(connection) catch |err| switch (err) {
+            //
+        };
     }
 }
 

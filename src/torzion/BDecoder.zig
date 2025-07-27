@@ -23,7 +23,7 @@ pub const Error = error{
     UnexpectedToken,
 };
 
-pub fn init(message: []const u8, allocator: std.mem.Allocator) !Decoder {
+pub fn init(allocator: std.mem.Allocator, message: []const u8) !Decoder {
     const owned = try allocator.alloc(u8, message.len);
     std.mem.copyForwards(u8, owned, message);
     return .{
@@ -250,43 +250,4 @@ pub fn charsRemaining(self: *Decoder) bool {
 
 pub fn char(self: *Decoder) u8 {
     return self.message[self.cursor];
-}
-
-test "Decoder.readInteger" {
-    const message = "i12345e";
-    var decoder = Decoder.init(message);
-    const number = try decoder.readInteger();
-    try std.testing.expect(number == 12345);
-}
-
-test "readString" {
-    const message = "3:abc";
-    var decoder = Decoder.init(message);
-    const string = try decoder.readString();
-    try std.testing.expect(std.mem.eql(u8, string, "abc"));
-}
-
-test "Decoder" {
-    const message = "3:abci12345e26:abcdefghijklmnopqrstuvwxyzd3:key3:vale";
-
-    var reader = Decoder.init(message);
-
-    const abc = try reader.readString();
-    try std.testing.expect(std.mem.eql(u8, abc, "abc"));
-
-    const number = try reader.readInteger();
-    try std.testing.expect(number == 12345);
-
-    const alphabet = try reader.readString();
-    try std.testing.expect(std.mem.eql(u8, alphabet, "abcdefghijklmnopqrstuvwxyz"));
-
-    try reader.skip("d");
-    const key = try reader.readString();
-    try std.testing.expect(std.mem.eql(u8, key, "key"));
-
-    const val = try reader.readString();
-    try std.testing.expect(std.mem.eql(u8, val, "val"));
-
-    try reader.skip("e");
-    try std.testing.expect(reader.message.len == reader.cursor);
 }

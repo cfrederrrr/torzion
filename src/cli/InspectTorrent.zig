@@ -10,6 +10,8 @@ const streql = clitools.streql;
 const torzion = @import("torzion");
 const MetaInfo = torzion.MetaInfo;
 
+const DecoderError = torzion.BDecoder.Error;
+
 const exit = std.process.exit;
 const log = std.log;
 
@@ -57,11 +59,12 @@ pub fn run() !void {
     const fc = try allocator.alloc(u8, stat.size);
     _ = try wd.readFile(path, fc);
 
-    var decoder = try torzion.BDecoder.init(fc, allocator);
+    var decoder = try torzion.BDecoder.init(allocator, fc);
     defer decoder.deinit();
+
     const torrent = decoder.decodeAny(torzion.MetaInfo) catch |e| switch (e) {
-        torzion.BDecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        torzion.BDecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         else => return e,
     };
 

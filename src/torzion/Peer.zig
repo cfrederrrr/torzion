@@ -1,18 +1,9 @@
 const std = @import("std");
-const net = std.net;
+const Allocator = std.mem.Allocator;
+const Connection = std.net.Server.Connection;
+const Stream = std.net.Stream;
 
 const Peer = @This();
-
-address: std.net.Ip4Address,
-port: u16,
-
-choke: bool = true,
-interested: bool = false,
-
-stream: ?net.Stream = null,
-
-outgoing: [32]?RequestMessage = undefined,
-incoming: [32]?RequestMessage = undefined,
 
 const ReadError = error{
     UnexpectedEOF,
@@ -21,257 +12,210 @@ const ReadError = error{
     InvalidLength,
 };
 
-const MessageType = enum(u8) {
-    Choke,
-    Unchoke,
-    Interested,
-    NotInterested,
-    Have,
-    Bitfield,
-    Request,
-    Piece,
-    Cancel,
-};
+const Message = union(enum) {
+    choke: void,
+    unchoke: void,
+    interested: void,
+    notInterested: void,
+    have: Have,
+    bitfield: BitField,
+    request: Request,
+    piece: Piece,
+    cancel: Cancel,
 
-pub const BitFieldMessage = struct {
-    field: []const u8,
-
-    pub fn init(field: []const u8) BitFieldMessage {
-        return .{ .field = field };
-    }
-
-    pub fn deserialize(reader: net.Stream.Reader, piece_count: usize, allocator: std.mem.Allocator) !BitFieldMessage {
-        // there must be some way of knowing how long the bitfield
-        // will be. i don't know what that is yet, probably just by
-        // providing some context about the torrent itself, but idk
-        // how that will look yet. for now, just take an argument
-        // but this api might change later depending on how the surrounding
-        // system works out
-        const field: []u8 = try allocator.alloc(u8, piece_count);
-        try reader.read(field);
-        return .{ .field = field };
-    }
-
-    pub fn serialize(self: BitFieldMessage, writer: net.Stream.Writer) !void {
-        const buffer: [self.field.len + 1]u8 = undefined;
-        buffer[0] = @intFromEnum(MessageType.Bitfield);
-        std.mem.copyForwards(u8, buffer[1..], self.field);
-        writer.writeAll(buffer[0..]);
-    }
-};
-
-pub const HaveMessage = struct {
-    index: usize,
-
-    pub fn init(index: usize) HaveMessage {
-        return .{ .index = index };
-    }
-
-    pub fn deserialize(reader: net.Stream.Reader) !HaveMessage {
-        var message: HaveMessage = undefined;
-        message.index = try reader.readInt(usize, .big);
-        return message;
-    }
-
-    pub fn serialize(self: HaveMessage, writer: net.Stream.Writer) !void {
-        const buffer: [5]u8 = undefined;
-        buffer[0] = @intFromEnum(MessageType.Have);
-        std.mem.writeInt(u32, buffer[0..], self.index, .big);
-        _ = writer;
-    }
-};
-
-pub const RequestMessage = struct {
-    index: u32,
-    begin: u32,
-    length: u32,
-
-    pub fn init(index: u32, begin: u32, length: u32) RequestMessage {
-        return .{
-            .index = index,
-            .begin = begin,
-            .length = length,
-        };
-    }
-
-    pub fn deserialize(reader: net.Stream.Reader) !RequestMessage {
-        const index = reader.readInt(u32, .big);
-        const begin = reader.readInt(u32, .big);
-        const length = reader.readInt(u32, .big);
-
-        // // i think these work the same way. i found reader.readInt
-        // // later, and i wanted to use that instead. if i'm wrong, and
-        // // they don't have the same result, revert these commented lines
-        // // and delete the preceeding 3 lines
-        // var buffer: [12]u8 = undefined;
-        // try stream.read(buffer[0..]);
-        // const index = std.mem.readInt(u32, buffer[1..5], .big);
-        // const begin = std.mem.readInt(u32, buffer[5..9], .big);
-        // const length = std.mem.readInt(u32, buffer[9..13], .big);
-
-        return .{
-            .index = index,
-            .begin = begin,
-            .length = length,
-        };
-    }
-
-    pub fn serialize(self: RequestMessage, writer: net.Stream.Writer) !void {
-        var buffer: [13]u8 = undefined;
-        buffer[0] = @intFromEnum(MessageType.Request);
-        std.mem.writeInt(u32, buffer[1..5], self.index, .big);
-        std.mem.writeInt(u32, buffer[5..9], self.begin, .big);
-        std.mem.writeInt(u32, buffer[9..13], self.length, .big);
-        try writer.writeAll(buffer[0..]);
-    }
-};
-
-// test RequestMessage {
-//     var rm: RequestMessage = RequestMessage.init(1,2,3);
-//     const address: []u8 = &"127.0.0.1";
-//     const stream = net.tcpConnectToAddress(address);
-//     const serialized = rm.serialize();
-// }
-
-// test RequestMessage {
-//     // Create a pair of connected sockets
-//     var server_socket = try std.net.Stream.initTcp();
-//     defer server_socket.deinit();
-//
-//     var client_socket = try std.net.Stream.initTcp();
-//     defer client_socket.deinit();
-//
-//     // Bind the server socket to a local address
-//     try server_socket.bind(.{ .address = std.net.Address.ip4(.{}, 0) });
-//
-//     // Get the server's address and port
-//     const server_address = try server_socket.getLocalAddress();
-//
-//     // Connect the client socket to the server
-//     try client_socket.connect(server_address);
-//
-//     // Accept the connection on the server side
-//     var server_connection = try server_socket.accept();
-//     defer server_connection.deinit();
-//
-//     // Now, server_connection and client_socket are connected and can be used as streams
-//
-//     // Example RequestMessage initialization and serialization
-//     var rm = RequestMessage{ .index = 1, .begin = 2, .length = 3 };
-//     try rm.serialize(client_socket.writer());
-//
-//     // Read the serialized data on the server side
-//     var buffer: [1024]u8 = undefined;
-//     const bytes_read = try server_connection.reader().read(&buffer);
-//     const received_data = buffer[0..bytes_read];
-//
-//     // Validate the received data
-//     std.debug.print("Received data: {x}\n", .{received_data});
-// }
-
-pub const CancelMessage = struct {
-    index: u32,
-    begin: u32,
-    length: u32,
-
-    pub fn init(index: u32, begin: u32, length: u32) CancelMessage {
-        return .{
-            .index = index,
-            .begin = begin,
-            .length = length,
-        };
-    }
-
-    pub fn deserialize(reader: net.Stream.Reader) !RequestMessage {
-        const index = reader.readInt(u32, .big);
-        const begin = reader.readInt(u32, .big);
-        const length = reader.readInt(u32, .big);
-
-        // // i think these work the same way. i found reader.readInt
-        // // later, and i wanted to use that instead. if i'm wrong, and
-        // // they don't have the same result, revert these commented lines
-        // // and delete the preceeding 3 lines
-        // var buffer: [12]u8 = undefined;
-        // try stream.read(buffer[0..]);
-        // const index = std.mem.readInt(u32, buffer[1..5], .big);
-        // const begin = std.mem.readInt(u32, buffer[5..9], .big);
-        // const length = std.mem.readInt(u32, buffer[9..13], .big);
-
-        return .{
-            .index = index,
-            .begin = begin,
-            .length = length,
-        };
-    }
-
-    pub fn serialize(self: CancelMessage, writer: net.Stream.Writer) []u8 {
-        var buffer: [13]u8 = undefined;
-        buffer[0] = @intFromEnum(MessageType.Cancel);
-        std.mem.writeInt(u32, buffer[1..5], self.index, .big);
-        std.mem.writeInt(u32, buffer[5..9], self.begin, .big);
-        std.mem.writeInt(u32, buffer[9..13], self.length, .big);
-        try writer.writeAll(buffer[0..]);
-    }
-};
-
-const Packet = struct {
-    data: []u8,
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) !Packet {
-        const data = try allocator.alloc(u8, 0);
-        return .{
-            .data = data,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn write(self: *Packet, data: []const u8) !usize {
-        var cursor: usize = self.data.len;
-        self.data = try self.allocator.realloc(self.data, self.data.len + data.len);
-        std.mem.copyForwards(u8, self.data[cursor..], data);
-        cursor += self.data.len;
-        return data.len;
-    }
-
-    pub fn deinit(self: *Packet) void {
-        self.allocator.free(self.data);
-    }
-};
-
-test "Packet" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-
-    var packet = try Packet.init(gpa.allocator());
-    defer packet.deinit();
-
-    _ = try packet.write("something");
-
-    try std.testing.expect(std.mem.eql(u8, packet.data, "something"));
-}
-
-const SHA1Hash = [20]u8;
-
-const Handshake = struct {
-    const BittorrentProtocol = "BitTorrent protocol";
-
-    protocol_name: [BittorrentProtocol.len]u8 = BittorrentProtocol,
-    reserved: []u8,
-    info_hash: SHA1Hash,
-    peer_id: SHA1Hash,
-};
-
-pub fn init(address: net.Ip4Address, port: u16, stream: ?net.Stream) !Peer {
-    return .{
-        .address = address,
-        .port = port,
-        .stream = stream,
+    pub const Have = struct {
+        index: u32,
     };
+
+    pub const BitField = struct {
+        field: []const u8,
+    };
+
+    pub const Request = struct {
+        index: u32,
+        begin: u32,
+        length: u32,
+    };
+
+    pub const Cancel = Request;
+
+    pub const Piece = struct {
+        //
+        index: u32,
+        begin: u32,
+        piece: []const u8,
+    };
+
+    pub const RequestQueue = struct {
+        // TODO: determine if 32 is an appropriate size for this
+        requests: [32]Request,
+        begin: u8 = 0,
+        end: u8 = 0,
+
+        pub fn push(self: *RequestQueue, request: Request) void {
+            self.requests[self.end] = request;
+            if (self.end < 31)
+                self.end += 1
+            else
+                self.end = 0;
+        }
+
+        pub fn next(self: *RequestQueue) ?Request {
+            if (self.begin == self.end) return;
+            const request = self.requests[self.begin];
+            self.begin += 1;
+            return request;
+        }
+    };
+
+    pub const Handshake = struct {
+        protocol_name: [19]u8,
+        reserved: [8]u8,
+        info_hash: [20]u8,
+        peer_id: [20]u8,
+
+        const Error = error{
+            InvalidProtocol,
+        };
+    };
+};
+
+connection: Connection,
+id: [20]u8,
+state: union(enum) { choke, interested } = .choke,
+outgoing: RequestQueue = undefined,
+incoming: RequestQueue = undefined,
+
+pub fn handshake(connection: Connection) !Peer {
+    const peer = Peer{ .connection = connection };
+    var hs: Handshake = undefined;
+
+    _ = try connection.stream.read(&hs.protocol_name);
+    _ = try connection.stream.read(&hs.reserved);
+    _ = try connection.stream.read(&hs.info_hash);
+    _ = try connection.stream.read(&hs.peer_id);
+
+    if (!std.mem.eql(u8, &hs.protocol_name, "BitTorrent protocol"))
+        return Handshake.Error.InvalidProtocol;
+
+    peer.id = hs.peer_id;
+
+    return peer;
 }
 
-pub fn initiateHandshake() !Peer {}
+fn writeInt(buffer: []u8, number: anytype) void {
+    std.mem.writeInt(u32, @ptrCast(buffer), @intCast(number), .big);
+}
 
-pub fn handshake() !Peer {}
+fn readInt(buffer: []u8) u32 {
+    return std.mem.readInt(u32, @ptrCast(buffer), .big);
+}
 
-pub fn receive() !Peer {}
+fn serializeMessage(allocator: Allocator, message: Message) ![]u8 {
+    const m_type: u8 = // @truncate(
+        // WARN: this might be a compiler error.
+        // since the enum is not explicitly a u8 it might default to usize
+        @intFromEnum(message)
+    // )
+    ;
+
+    switch (message) {
+        .choke, .unchoke, .interested, .notInterested => {
+            const bytes = try allocator.alloc(u8, 5);
+            writeInt(bytes[0..4], 1);
+            bytes[4] = m_type;
+            return bytes;
+        },
+        .have => {
+            const bytes = try allocator.alloc(u8, 9);
+            writeInt(bytes[0..4], 1);
+            bytes[4] = m_type;
+            writeInt(bytes[5..9], message.have.index);
+            return bytes;
+        },
+        .bitfield => {
+            const bytes = try allocator.alloc(u8, 5 + message.bitfield.field.len);
+            writeInt(bytes[0..4], @truncate(message.bitfield.field.len));
+            bytes[4] = m_type;
+            std.mem.copyForwards(u8, bytes, message.bitfield.field);
+            return bytes;
+        },
+        .request => {
+            const bytes = try allocator.alloc(u8, 17);
+            writeInt(bytes[0..4], 12);
+            bytes[4] = m_type;
+            writeInt(bytes[5..9], message.request.index);
+            writeInt(bytes[9..13], message.request.begin);
+            writeInt(bytes[13..17], message.request.length);
+            return bytes;
+        },
+        .piece => {
+            const bytes = try allocator.alloc(u8, 13 + message.piece.piece.len);
+            writeInt(bytes[0..4], message.piece.piece.len);
+            bytes[4] = m_type;
+            writeInt(bytes[5..9], message.piece.index);
+            writeInt(bytes[9..13], message.piece.begin);
+            std.mem.copyForwards(u8, bytes[13..], message.piece.piece);
+            return bytes;
+        },
+        .cancel => {
+            const bytes = try allocator.alloc(u8, 17);
+            writeInt(bytes[0..4], 12);
+            bytes[4] = m_type;
+            writeInt(bytes[5..9], message.cancel.begin);
+            writeInt(bytes[9..13], message.cancel.index);
+            writeInt(bytes[13..17], message.cancel.length);
+            return bytes;
+        },
+    }
+}
+
+pub fn deserializeMessage(allocator: Allocator, bytes: []u8) !Message {
+    const len = readInt(bytes[0..4]);
+    const message: Message = @enumFromInt(bytes[4]);
+    switch (message) {
+        .choke, .unchoke, .interested, .notInterested => return message,
+        .have => {
+            message.have = undefined;
+            message.have.index = readInt(bytes[5..9]);
+            return message;
+        },
+        .bitfield => {
+            message.bitfield = undefined;
+            message.bitfield.field = readInt(bytes[5..len]);
+            return message;
+        },
+        .request => {
+            message.request = undefined;
+            message.request.index = readInt(bytes[5..9]);
+            message.request.begin = readInt(bytes[9..13]);
+            message.request.length = readInt(bytes[13..17]);
+            return message;
+        },
+        .piece => {
+            message.piece = undefined;
+            message.piece.index = readInt(bytes[5..9]);
+            message.piece.begin = readInt(bytes[9..13]);
+            message.piece.piece = bytes[13..];
+            return message;
+        },
+        .cancel => {
+            message.cancel = undefined;
+            message.cancel.index = readInt(bytes[5..9]);
+            message.cancel.begin = readInt(bytes[9..13]);
+            message.cancel.length = readInt(bytes[13..17]);
+            return message;
+        },
+    }
+}
+
+pub fn send(peer: *Peer, message: Message) !void {
+    const serialized = serializeMessage(message);
+    try peer.connection.stream.write(serialized);
+}
+
+pub fn read() !Message {}
+
+pub fn close(self: *Peer) void {
+    self.stream.close();
+}

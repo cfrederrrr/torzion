@@ -107,7 +107,7 @@ pub fn deinit(self: *MetaInfo, allocator: std.mem.Allocator) void {
 }
 
 /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
-fn archiveFromDir(allocator: std.mem.Allocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !MetaInfo {
+pub fn createMultiFileTorrent(allocator: std.mem.Allocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !MetaInfo {
     const wd = std.fs.cwd();
     const dir = try wd.openDir(path, .{ .iterate = true });
 
@@ -138,16 +138,19 @@ fn archiveFromDir(allocator: std.mem.Allocator, path: []const u8, announce: []co
         contents = try allocator.realloc(contents, content_end + stat.size + (stat.size % piece_length));
         _ = try dir.readFile(entry.path, contents[content_end..]);
 
-        const segments = try allocator.alloc([]const u8, entry.path.len);
+        var segments = std.ArrayList([]const u8).init(allocator);
+        defer segments.deinit();
 
         var i: usize = 0;
         var it = std.mem.splitScalar(u8, entry.path, @as(u8, std.fs.path.sep));
-        while (it.next()) |p| {
-            segments[i] = p;
+        while (it.next()) |s| {
+            const segment = try allocator.alloc(u8, s.len);
+            std.mem.copyForwards(u8, segment, s);
+            try segments.append(segment);
             i += 1;
         }
 
-        try directory.append(.{ .length = stat.size, .path = segments });
+        try directory.append(.{ .length = stat.size, .path = try segments.toOwnedSlice() });
     }
 
     // per bep3, the last piece should be padded with zeroes if it does not fill out
@@ -182,7 +185,7 @@ fn archiveFromDir(allocator: std.mem.Allocator, path: []const u8, announce: []co
 }
 
 /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
-fn archiveFromFile(allocator: Allocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !MetaInfo {
+pub fn createSingleFileTorrent(allocator: Allocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !MetaInfo {
     const wd = std.fs.cwd();
     const stat = try wd.statFile(path);
 
@@ -203,7 +206,7 @@ fn archiveFromFile(allocator: Allocator, path: []const u8, announce: []const u8,
         const chunk = contents[i * (piece_length) .. (i * (piece_length)) + piece_length];
         var piece: [20]u8 = undefined;
         std.crypto.hash.Sha1.hash(chunk, &piece, .{});
-        std.mem.copyForwards(u8, pieces[i * 20 .. 20 + i * 20], piece[0..]);
+        std.mem.copyForwards(u8, pieces[i * 20 .. 20 + (i * 20)], piece[0..]);
     }
 
     return .{
@@ -219,13 +222,12 @@ fn archiveFromFile(allocator: Allocator, path: []const u8, announce: []const u8,
 }
 
 /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
-pub fn createArchive(allocator: Allocator, path: []const u8, announce: []const u8, private: ?bool, piece_length: ?usize) !MetaInfo {
-    //
+pub fn createTorrent(allocator: Allocator, path: []const u8, announce: []const u8, private: ?bool, piece_length: ?usize) !MetaInfo {
     const wd = std.fs.cwd();
     const stat = try wd.statFile(path);
     return switch (stat.kind) {
-        .directory => try archiveFromDir(allocator, path, announce, private orelse false, piece_length orelse 0x100000),
-        .file => try archiveFromFile(allocator, path, announce, private, piece_length),
+        .directory => try createMultiFileTorrent(allocator, path, announce, private orelse false, piece_length orelse 0x100000),
+        .file => try createSingleFileTorrent(allocator, path, announce, private orelse false, piece_length orelse 0x100000),
         else => error.InvalidFiletype,
     };
 }

@@ -34,7 +34,7 @@ pub fn ensureCapacity(self: *Encoder, len: usize) !void {
 }
 
 pub fn write(self: *Encoder, bytes: []const u8) !void {
-    std.log.debug("position={d} message.len={d} message='{s}' writing={s}", .{ self.cursor, self.message.len, self.result(), bytes });
+    std.log.debug("position={d} message.len={d} bytes.len={d} message='{s}' writing={s}", .{ self.cursor, self.message.len, bytes.len, self.result(), bytes });
     try self.ensureCapacity(bytes.len);
     std.mem.copyForwards(u8, self.message[self.cursor..], bytes);
     std.log.debug("done writing", .{});
