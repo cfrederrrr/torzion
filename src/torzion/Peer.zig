@@ -1,17 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Connection = std.net.Server.Connection;
+
+const Address = std.net.Address;
 const Stream = std.net.Stream;
 
 const Peer = @This();
 
-const ReadError = error{
-    UnexpectedEOF,
-    UnexpectedCharacter,
-    FormatError,
-    InvalidLength,
-};
-
+const ProtocolName = "BitTorrent protocol";
 const Message = union(enum) {
     choke: void,
     unchoke: void,
@@ -45,62 +40,135 @@ const Message = union(enum) {
         begin: u32,
         piece: []const u8,
     };
+};
 
-    pub const RequestQueue = struct {
-        // TODO: determine if 32 is an appropriate size for this
-        requests: [32]Request,
-        begin: u8 = 0,
-        end: u8 = 0,
+pub const RequestQueue = struct {
+    // TODO: determine if 32 is an appropriate size for this
+    requests: [32]Message.Request,
+    begin: u8 = 0,
+    end: u8 = 0,
 
-        pub fn push(self: *RequestQueue, request: Request) void {
-            self.requests[self.end] = request;
-            if (self.end < 31)
-                self.end += 1
-            else
-                self.end = 0;
-        }
+    pub fn push(self: *RequestQueue, request: Message.Request) void {
+        self.requests[self.end] = request;
+        if (self.end < 31)
+            self.end += 1
+        else
+            self.end = 0;
+    }
 
-        pub fn next(self: *RequestQueue) ?Request {
-            if (self.begin == self.end) return;
-            const request = self.requests[self.begin];
-            self.begin += 1;
-            return request;
-        }
-    };
+    pub fn next(self: *RequestQueue) ?Message.Request {
+        if (self.begin == self.end) return;
+        const request = self.requests[self.begin];
+        self.begin += 1;
+        return request;
+    }
+};
 
-    pub const Handshake = struct {
-        protocol_name: [19]u8,
-        reserved: [8]u8,
-        info_hash: [20]u8,
-        peer_id: [20]u8,
+pub const Handshake = struct {
+    protocol_name: [19]u8,
+    reserved: [8]u8,
+    info_hash: [20]u8,
+    peer_id: [20]u8,
 
-        const Error = error{
-            InvalidProtocol,
-        };
+    const Error = error{
+        InvalidProtocol,
+        InfoHashMismatch,
     };
 };
 
-connection: Connection,
+address: Address,
 id: [20]u8,
-state: union(enum) { choke, interested } = .choke,
-outgoing: RequestQueue = undefined,
-incoming: RequestQueue = undefined,
 
-pub fn handshake(connection: Connection) !Peer {
-    const peer = Peer{ .connection = connection };
-    var hs: Handshake = undefined;
+pub const Connection = struct {
+    allocator: Allocator,
+    stream: Stream,
+    state: union(enum) { choke, interested } = .choke,
+    outgoing: RequestQueue = undefined,
+    incoming: RequestQueue = undefined,
 
-    _ = try connection.stream.read(&hs.protocol_name);
-    _ = try connection.stream.read(&hs.reserved);
-    _ = try connection.stream.read(&hs.info_hash);
-    _ = try connection.stream.read(&hs.peer_id);
+    pub fn init(allocator: Allocator, address: Address) !Connection {
+        const stream = try std.net.tcpConnectToAddress(address);
+        return .{ .allocator = allocator, .stream = stream };
+    }
 
-    if (!std.mem.eql(u8, &hs.protocol_name, "BitTorrent protocol"))
+    pub fn close(self: *Connection) void {
+        self.stream.close();
+    }
+};
+
+pub fn connect(peer: Peer, allocator: Allocator) !Connection {
+    return Connection.init(allocator, peer.address);
+}
+
+pub fn receiveHandshake(info_hash: [20]u8, stream: Stream) !Handshake {
+    const pnl = [_]u8{0};
+    _ = try stream.read(&pnl);
+
+    if (pnl[0] != 19)
         return Handshake.Error.InvalidProtocol;
 
-    peer.id = hs.peer_id;
+    var incoming: Handshake = undefined;
+    _ = try stream.read(&incoming.protocol_name);
+    _ = try stream.read(&incoming.reserved);
+    _ = try stream.read(&incoming.info_hash);
+    _ = try stream.read(&incoming.peer_id);
 
-    return peer;
+    if (!std.mem.eql(u8, &incoming.protocol_name, ProtocolName))
+        return Handshake.Error.InvalidProtocol;
+
+    if (!std.mem.eql(u8, &incoming.info_hash, info_hash))
+        return Handshake.Error.InfoHashMismatch;
+
+    return incoming;
+}
+
+pub fn sendHandshake(allocator: Allocator, peer_id: [20]u8, info_hash: [20]u8, reserved: [8]u8, stream: Stream) !void {
+    const outgoing = allocator.alloc(u8, 1 + @sizeOf(Handshake));
+    defer allocator.free(outgoing);
+
+    outgoing[0] = ProtocolName.len;
+    std.mem.copyForwards(u8, outgoing[1..20], ProtocolName);
+    std.mem.copyForwards(u8, outgoing[20..28], reserved);
+    std.mem.copyForwards(u8, outgoing[28..48], info_hash);
+    std.mem.copyForwards(u8, outgoing[48..], peer_id);
+
+    _ = try stream.write(outgoing);
+
+    const pnl = [_]u8{0};
+    _ = try stream.read(&pnl);
+
+    if (pnl[0] != 19)
+        return Handshake.Error.InvalidProtocol;
+
+    var incoming: Handshake = undefined;
+    _ = try stream.read(&incoming.protocol_name);
+    _ = try stream.read(&incoming.reserved);
+    _ = try stream.read(&incoming.info_hash);
+    _ = try stream.read(&incoming.peer_id);
+
+    if (!std.mem.eql(u8, &incoming.protocol_name, ProtocolName))
+        return Handshake.Error.InvalidProtocol;
+
+    if (!std.mem.eql(u8, &incoming.info_hash, info_hash))
+        return Handshake.Error.InfoHashMismatch;
+}
+
+pub fn handshake(
+    allocator: Allocator,
+    reserved: [8]u8,
+    info_hash: [20]u8,
+    peer_id: [20]u8,
+    stream: Stream,
+    address: Address,
+) !Peer {
+    const incoming = receiveHandshake(info_hash, stream);
+    try sendHandshake(allocator, peer_id, info_hash, reserved, stream);
+    return Peer{
+        .id = incoming.peer_id,
+        .allocator = allocator,
+        .stream = stream,
+        .address = address,
+    };
 }
 
 fn writeInt(buffer: []u8, number: anytype) void {
@@ -170,8 +238,7 @@ fn serializeMessage(allocator: Allocator, message: Message) ![]u8 {
     }
 }
 
-pub fn deserializeMessage(allocator: Allocator, bytes: []u8) !Message {
-    const len = readInt(bytes[0..4]);
+pub fn deserializeMessage(len: u32, bytes: []u8) Message {
     const message: Message = @enumFromInt(bytes[4]);
     switch (message) {
         .choke, .unchoke, .interested, .notInterested => return message,
@@ -196,7 +263,7 @@ pub fn deserializeMessage(allocator: Allocator, bytes: []u8) !Message {
             message.piece = undefined;
             message.piece.index = readInt(bytes[5..9]);
             message.piece.begin = readInt(bytes[9..13]);
-            message.piece.piece = bytes[13..];
+            message.piece.piece = bytes[13..len];
             return message;
         },
         .cancel => {
@@ -209,12 +276,19 @@ pub fn deserializeMessage(allocator: Allocator, bytes: []u8) !Message {
     }
 }
 
+/// this function leaks. be sure to free
 pub fn send(peer: *Peer, message: Message) !void {
-    const serialized = serializeMessage(message);
+    const serialized = serializeMessage(peer.allocator, message);
     try peer.connection.stream.write(serialized);
 }
 
-pub fn read() !Message {}
+pub fn receive(peer: *Peer) !Message {
+    var len: [4]u8 = undefined;
+    _ = try peer.connection.stream.read(&len);
+    const message = try peer.allocator.alloc(u8, readInt(len));
+    _ = try peer.connection.stream.read(message);
+    return deserializeMessage(readInt(len), message);
+}
 
 pub fn close(self: *Peer) void {
     self.stream.close();

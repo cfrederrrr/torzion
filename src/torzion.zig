@@ -28,8 +28,3 @@ pub fn encodeTorrent(allocator: Allocator, any: anytype) !BEncoder {
     try encoder.encodeAny(any);
     return encoder;
 }
-
-pub fn seed(allocator: std.mem.Allocator, peer: Peer) !void {
-    //
-    peer;
-}
