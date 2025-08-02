@@ -2,6 +2,7 @@ const std = @import("std");
 const basename = std.fs.path.basename;
 
 const Allocator = std.mem.Allocator;
+const Encoder = @import("BEncoder.zig");
 
 const MetaInfo = @This();
 pub const Info = struct {
@@ -230,4 +231,14 @@ pub fn createTorrent(allocator: Allocator, path: []const u8, announce: []const u
         .file => try createSingleFileTorrent(allocator, path, announce, private orelse false, piece_length orelse 0x100000),
         else => error.InvalidFiletype,
     };
+}
+
+pub fn infoHash(self: *MetaInfo, allocator: Allocator) ![20]u8 {
+    // there's probably a more efficient way to do all this
+    const encoder = try Encoder.init(allocator);
+    defer encoder.deinit();
+    try encoder.encodeAny(self.info);
+    const out: [20]u8 = undefined;
+    std.crypto.hash.Sha1.hash(encoder.result(), out, .{});
+    return out;
 }
