@@ -2,6 +2,8 @@
 //! It copies the message provided to .init()
 //! Calling .deinit() on a decoder frees both the message and everything it had to allocate during decoding
 
+// much of this is borrowed from sphaerophoria https://www.youtube.com/watch?v=fh3i5_61LYk
+
 const std = @import("std");
 const Decoder = @This();
 

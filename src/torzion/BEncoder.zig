@@ -1,3 +1,5 @@
+// much of this is borrowed from sphaerophoria https://www.youtube.com/watch?v=fh3i5_61LYk
+
 const std = @import("std");
 const log10 = std.math.log10;
 const pageSize = std.heap.pageSize;
@@ -13,10 +15,10 @@ pub const Error = error{
 };
 
 pub fn init(allocator: std.mem.Allocator) !Encoder {
-    const buffer = try allocator.alloc(u8, pageSize());
+    const buffer = try allocator.alloc(u8, pageSize()); // TODO: delete this?
     return .{
         .allocator = allocator,
-        .message = buffer,
+        .message = buffer, // TODO: start with &[_]u8{}?
     };
 }
 
