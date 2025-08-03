@@ -3,8 +3,20 @@ const Allocator = std.mem.Allocator;
 
 const Address = std.net.Address;
 const Stream = std.net.Stream;
+const BrokenPipe = Stream.WriteError.BrokenPipe;
+const ConnectionResetByPeer = Stream.WriteError.ConnectionResetByPeer;
 
 const Peer = @This();
+
+id: [20]u8,
+ip: []const u8,
+port: u16,
+stream: ?std.net.Stream,
+
+const Error = error{
+    InvalidPeerAddress,
+    MessageSendError,
+};
 
 const ProtocolName = "BitTorrent protocol";
 const Message = union(enum) {
@@ -76,9 +88,6 @@ pub const Handshake = struct {
     };
 };
 
-address: Address,
-id: [20]u8,
-
 pub const Connection = struct {
     allocator: Allocator,
     stream: Stream,
@@ -95,10 +104,6 @@ pub const Connection = struct {
         self.stream.close();
     }
 };
-
-pub fn connect(peer: Peer, allocator: Allocator) !Connection {
-    return Connection.init(allocator, peer.address);
-}
 
 pub fn receiveHandshake(info_hash: [20]u8, stream: Stream) !Handshake {
     const pnl = [_]u8{0};
@@ -276,10 +281,31 @@ pub fn deserializeMessage(len: u32, bytes: []u8) Message {
     }
 }
 
+pub fn connect(peer: *Peer) !Stream {
+    if (peer.stream) |stream| return stream;
+    const address: Address = Address.parseIp4(peer.ip, peer.port);
+    peer.stream = try std.net.tcpConnectToAddress(address);
+    return peer.stream.?;
+}
+
 /// this function leaks. be sure to free
 pub fn send(peer: *Peer, message: Message) !void {
-    const serialized = serializeMessage(peer.allocator, message);
-    try peer.connection.stream.write(serialized);
+    const serialized = try serializeMessage(peer.allocator, message);
+    const stream = if (peer.stream) |s| s else peer.connect();
+    var attempt: usize = 0;
+    while (attempt < 3) : (attempt += 1) {
+        const sent = stream.write(serialized) catch |err| switch (err) {
+            BrokenPipe, ConnectionResetByPeer => {
+                stream = peer.connect();
+                continue;
+            },
+            else => break,
+        };
+
+        if (sent == serialized.len) return;
+    }
+
+    return Error.MessageSendError;
 }
 
 pub fn receive(peer: *Peer) !Message {

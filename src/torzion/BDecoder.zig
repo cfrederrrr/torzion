@@ -125,6 +125,12 @@ pub fn decodeStruct(self: *Decoder, comptime T: type) !T {
     return try unwrapNullable(T, nullable);
 }
 
+pub fn decodeUnion(self: *Decoder, comptime T: type) !T {
+    //
+    const NullableT = Nullable(T);
+    var nullable = NullableT{};
+}
+
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// > Lists are encoded as an 'l' followed by their elements (also bencoded)
 /// > followed by an 'e'. For example l4:spam4:eggse corresponds to
@@ -185,13 +191,15 @@ pub fn decodeBool(self: *Decoder) !bool {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 pub fn decodeAny(self: *Decoder, comptime T: type) !T {
-    return switch (@typeInfo(T)) {
+    const ti = @typeInfo(T);
+    return switch (ti) {
         .comptime_int, .int => try self.decodeInteger(T),
         .@"struct" => try self.decodeStruct(T),
         .array => try self.decodeArray(T),
         .optional => |o| try self.decodeAny(o.child),
         .pointer => try self.decodeSlice(T),
         .bool => try self.decodeBool(),
+        .@"union" => try self.decodeUnion(T),
         else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
     };
 }

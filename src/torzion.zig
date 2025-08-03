@@ -1,5 +1,5 @@
 pub const MetaInfo = @import("torzion/MetaInfo.zig");
-pub const Tracker = @import("torzion/Tracker.zig");
+pub const tracker = @import("torzion/tracker.zig");
 
 pub const BEncoder = @import("torzion/BEncoder.zig");
 pub const BDecoder = @import("torzion/BDecoder.zig");

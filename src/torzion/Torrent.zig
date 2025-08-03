@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 
 const Decoder = @import("BDecoder.zig");
 
+const tracker = @import("tracker.zig");
+
 const Peer = @import("Peer.zig");
 const MetaInfo = @import("MetaInfo.zig");
 
@@ -19,6 +21,7 @@ pub fn init(allocator: Allocator, path: []const u8) !Torrent {
     try std.fs.cwd().readFile(path, contents);
     const decoder = try Decoder.init(allocator, contents);
     const meta = try decoder.decodeAny(MetaInfo);
+    _ = meta;
 
     // use announce or @"announce list" to find peers
     //
@@ -53,7 +56,8 @@ pub fn joinSwarm(allocator: Allocator, info: MetaInfo) !Torrent {
                 const body = try allocator.alloc(u8, req.response.content_length orelse continue);
                 _ = try req.read(body);
 
-                const tracker = encoder.decode(Tracker);
+                const decoder = Decoder.init(allocator, body);
+                const response = decoder.decode(tracker.Response);
             }
         }
     } else if (info.announce) |announce| {
