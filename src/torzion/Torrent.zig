@@ -2,9 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Decoder = @import("BDecoder.zig");
-
 const tracker = @import("tracker.zig");
-
 const Peer = @import("Peer.zig");
 const MetaInfo = @import("MetaInfo.zig");
 
@@ -13,6 +11,11 @@ peers: []Peer,
 meta: MetaInfo,
 
 const Torrent = @This();
+
+const Download = struct {
+    part_file: []const u8,
+    contents: []u8,
+};
 
 pub fn init(allocator: Allocator, path: []const u8) !Torrent {
     //
@@ -36,32 +39,51 @@ pub fn init(allocator: Allocator, path: []const u8) !Torrent {
     // or seeding
 }
 
-pub fn joinSwarm(allocator: Allocator, info: MetaInfo) !Torrent {
+pub fn joinSwarm(
+    allocator: Allocator,
+    torrentFile: []const u8,
+    downloadDir: []const u8,
+) !Torrent {
     //
     const peer_id: [20]u8 = undefined;
     std.crypto.random.bytes(&peer_id);
 
+    const info_stat = try std.fs.cwd().statFile(torrentFile);
+    const info_content = allocator.alloc(u8, info_stat.size);
+    try std.fs.cwd().readFile(torrentFile, info_content);
+    var decoder = try Decoder.init(allocator, info_content);
+
+    const info = try decoder.decodeAny(MetaInfo);
+
     const peers = std.StringHashMap(Peer).init(allocator);
-    if (info.@"announce-list") |announce_list| {
-        var client = std.http.Client{ .allocator = allocator };
 
-        for (announce_list) |announce| {
-            for (announce) |hostname| {
-                const uri = try std.Uri.parse(hostname);
-                var req = try client.open(.GET, uri, .{ .server_header_buffer = &.{} });
-                defer req.deinit();
-                req.send() catch continue; // torrents can have zero peers if they want to
-                req.finish() catch continue;
-                req.wait() catch continue;
-                const body = try allocator.alloc(u8, req.response.content_length orelse continue);
-                _ = try req.read(body);
+    // TODO:
+    // - analyze the current download to determine how much we have already
+    //   downloaded to make the announcement
+    // - implement an IncompleteDownload or Download to store the contents
+    //   in memory to analyze this quickly
+    // - the IncompleteDownload should be resumable and should inflate to
+    //   the downloadDir upon completion
+    const trackers = try tracker.announce(allocator, info, .{
+        .downloaded = 0,
+        .event = .empty,
+        .info_hash = info.infoHash(allocator),
+        .ip = "127.0.0.1",
+        .port = 0,
+        .left = 0,
+        .peer_id = [_]u8{0} ** 20,
+        .uploaded = 0,
+    });
 
-                const decoder = Decoder.init(allocator, body);
-                const response = decoder.decode(tracker.Response);
-            }
+    for (trackers) |response| {
+        switch (response) {
+            .ok => |ok| {
+                ok.interval;
+                ok.peers;
+            },
+            .failure => |failure| {
+                failure.@"failure reason";
+            },
         }
-    } else if (info.announce) |announce| {
-        _ = announce;
     }
-    // peers.put(peer.id, peer);
 }

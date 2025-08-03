@@ -26,7 +26,7 @@ pub const Response = union(enum) {
         /// If a tracker response has a key failure reason, then that maps to a human
         /// readable string which explains why the query failed, and no other keys are
         /// required.
-        @"failure reason": ?[]const u8,
+        @"failure reason": []const u8,
     };
 
     pub const OK = struct {
@@ -44,7 +44,7 @@ pub const Response = union(enum) {
 };
 
 pub const Announcement = struct {
-    const Event = enum { started, completed, stopped, empty };
+    pub const Event = enum { started, completed, stopped, empty };
 
     /// The 20 byte sha1 hash of the bencoded form of the info value from the metainfo file.
     /// This value will almost certainly have to be escaped.
@@ -111,19 +111,22 @@ pub const Announcement = struct {
     }
 };
 
-pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement: Announcement) !void {
+pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement: Announcement) ![]Response {
     // try self.meta_info.infoHash(allocator);
 
     var client = http.Client{ .allocator = allocator };
     defer client.deinit();
 
+    const responses = std.ArrayList(Response).init(allocator);
+
     if (meta_info.@"announce-list") |list| {
         for (list) |tier| {
+            var response: Response = undefined;
             for (tier) |url| {
-                const response = sendAnnouncement(allocator, client, url, announcement) catch continue;
-                // TODO: handle this somehow
-                if (response.failure) continue else break;
+                response = try sendAnnouncement(allocator, client, url, announcement) catch continue;
+                if (response.ok) |_| break;
             }
+            responses.append(response);
         }
     } else if (meta_info.announce) |url| {
         const response = try sendAnnouncement(allocator, client, url, announcement);
@@ -143,6 +146,7 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
     defer request.deinit();
     try request.send();
     try request.finish();
+    try request.wait();
 
     // we don't talk to servers that won't tell us the content length
     const content_length = request.response.content_length orelse return Error.ContentLengthNotSpecified;
@@ -150,10 +154,15 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
 
     _ = request.read(body) catch return Error.CouldNotReadBody;
 
-    const decoder = try Decoder.init(allocator, body);
-    const response = try decoder.decodeAny(Response);
+    var decoder = try Decoder.init(allocator, body);
+    defer decoder.deinit();
+    const ok = decoder.decodeStruct(Response.OK) catch {
+        decoder.deinit();
+        decoder = try Decoder.init(allocator, body);
+        return Response{ .failure = try decoder.decodeStruct(Response.Failure) };
+    };
 
-    return response;
+    return Response{ .ok = ok };
 }
 
 fn warn(string: []const u8, args: anytype) void {

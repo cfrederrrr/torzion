@@ -115,20 +115,19 @@ pub fn decodeStruct(self: *Decoder, comptime T: type) !T {
         if (self.char() == 'e') break;
         const key = try self.decodeString();
 
+        var unmatched = true;
         inline for (std.meta.fields(T)) |field| {
-            if (std.mem.eql(u8, key, field.name))
+            if (std.mem.eql(u8, key, field.name)) {
+                if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
                 @field(nullable, field.name) = try self.decodeAny(field.type);
+            }
         }
+
+        if (unmatched) return Error.InvalidField;
     }
 
     try self.skip("e");
     return try unwrapNullable(T, nullable);
-}
-
-pub fn decodeUnion(self: *Decoder, comptime T: type) !T {
-    //
-    const NullableT = Nullable(T);
-    var nullable = NullableT{};
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -199,7 +198,6 @@ pub fn decodeAny(self: *Decoder, comptime T: type) !T {
         .optional => |o| try self.decodeAny(o.child),
         .pointer => try self.decodeSlice(T),
         .bool => try self.decodeBool(),
-        .@"union" => try self.decodeUnion(T),
         else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
     };
 }
