@@ -156,11 +156,7 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
 
     var decoder = try Decoder.init(allocator, body);
     defer decoder.deinit();
-    const ok = decoder.decodeStruct(Response.OK) catch {
-        decoder.deinit();
-        decoder = try Decoder.init(allocator, body);
-        return Response{ .failure = try decoder.decodeStruct(Response.Failure) };
-    };
+    const ok = decoder.decode(Response.OK) catch return decoder.decode(Response.Failure);
 
     return Response{ .ok = ok };
 }

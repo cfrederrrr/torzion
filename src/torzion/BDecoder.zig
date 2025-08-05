@@ -36,7 +36,18 @@ pub fn init(allocator: std.mem.Allocator, message: []const u8) !Decoder {
 }
 
 pub fn deinit(self: *Decoder) void {
+    self.cursor = 0;
     self.allocator.deinit();
+    self.allocator.allocator().free(self.message);
+}
+
+/// Always decodes from the start of self.message and frees any memory allocated during a previous call to .decode().
+/// In almost all cases, this should only ever be called once per message as it invalidates any objects previously parsed.
+/// The only reason to call it twice is to recover from an error in a previous call to .decode().
+pub fn decode(self: *Decoder, comptime T: type) !T {
+    self.cursor = 0;
+    _ = self.allocator.reset(.free_all);
+    return self.decodeAny(T);
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -173,6 +184,8 @@ pub fn decodeSlice(self: *Decoder, comptime Slice: type) !Slice {
     try self.skip("l");
 
     var list = std.ArrayList(info.pointer.child).init(self.allocator.allocator());
+    defer list.deinit();
+
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
         const item = try self.decodeAny(info.pointer.child);
