@@ -6,12 +6,11 @@ const Stream = std.net.Stream;
 const BrokenPipe = Stream.WriteError.BrokenPipe;
 const ConnectionResetByPeer = Stream.WriteError.ConnectionResetByPeer;
 
-const Peer = @This();
-
-id: [20]u8,
-ip: []const u8,
-port: u16,
-stream: ?std.net.Stream,
+pub const Peer = struct {
+    id: [20]u8,
+    ip: []const u8,
+    port: u16,
+};
 
 const Error = error{
     InvalidPeerAddress,
@@ -314,8 +313,4 @@ pub fn receive(peer: *Peer) !Message {
     const message = try peer.allocator.alloc(u8, readInt(len));
     _ = try peer.connection.stream.read(message);
     return deserializeMessage(readInt(len), message);
-}
-
-pub fn close(self: *Peer) void {
-    self.stream.close();
 }

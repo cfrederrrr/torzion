@@ -118,22 +118,27 @@ pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement:
     defer client.deinit();
 
     const responses = std.ArrayList(Response).init(allocator);
+    defer responses.deinit();
 
     if (meta_info.@"announce-list") |list| {
         for (list) |tier| {
-            var response: Response = undefined;
             for (tier) |url| {
-                response = try sendAnnouncement(allocator, client, url, announcement) catch continue;
-                if (response.ok) |_| break;
+                const response = sendAnnouncement(allocator, client, url, announcement) catch continue;
+                try responses.append(response);
+                switch (response) {
+                    .ok => break,
+                    .failure => continue,
+                }
             }
-            responses.append(response);
         }
     } else if (meta_info.announce) |url| {
         const response = try sendAnnouncement(allocator, client, url, announcement);
-        if (response.failure) return Error.AnnounceFailure;
+        try responses.append(response);
     } else {
         return Error.NoAnnounceDefined;
     }
+
+    return responses.toOwnedSlice();
 }
 
 fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []const u8, announcement: Announcement) !Response {
@@ -155,6 +160,23 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
     _ = request.read(body) catch return Error.CouldNotReadBody;
 
     var decoder = try Decoder.init(allocator, body);
+    // WARN:
+    // we can't deinit here, or else we have to
+    // a) return the decoder instead of the response
+    // b) copy the data from the decoder to a new response object
+    // but we also have to deinit because otherwise this fn leaks a whole decoder
+    // and its message every time.
+    //
+    // idk what to do yet. maybe we shouldn't be decoding the response here.
+    // this function should probably just handle the networking/http parts
+    // and return the raw string to be decoded
+    //
+    // on the other hand, i don't think i want the decoder to own the memory anymore
+    // but that would mean either carrying an allocator around with all the decoded
+    // entitites, or tracking them elsewhere
+    //
+    // do we empower the decoder to decode multiple messages and track ownership there?
+    // no way.
     defer decoder.deinit();
     const ok = decoder.decode(Response.OK) catch return decoder.decode(Response.Failure);
 
