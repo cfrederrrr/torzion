@@ -39,6 +39,121 @@ pub fn decode(self: *Decoder, any: anytype) !void {
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Dictionaries are encoded as a 'd' followed by a list of alternating keys
+/// > and their corresponding values followed by an 'e'. For example,
+/// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
+/// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
+/// > and appear in sorted order (sorted as raw strings, not alphanumerics).
+fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
+    const NullableT = Nullable(T);
+    var n = NullableT{};
+
+    try self.skip("d");
+    while (self.charsRemaining()) {
+        if (self.char() == 'e') break;
+        var key: []u8 = undefined;
+        try self.decodeString(&key, owner);
+
+        var unmatched = true;
+        inline for (std.meta.fields(T)) |field| {
+            const F = field.type;
+            if (std.mem.eql(u8, key, field.name)) {
+                if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
+                var f: F = undefined;
+                try self.decodeAny(F, &f, owner);
+                @field(n, field.name) = f;
+            }
+        }
+
+        if (unmatched) return Error.InvalidField;
+    }
+
+    // try unwrapNullable(T, t, n);
+    inline for (std.meta.fields(T)) |field| {
+        @field(t.*, field.name) = @field(n, field.name) orelse blk: {
+            if (@typeInfo(field.type) == .optional) break :blk null;
+            return Error.MissingFields;
+        };
+    }
+
+    try self.skip("e");
+}
+
+test "decodeStruct" {
+    var decoder = Decoder.init("d6:string10:abcdefghij6:numberi23ee"[0..]);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const Item = struct { string: []u8, number: usize };
+    var item: Item = undefined;
+    const owner = gpa.allocator();
+    try decoder.decodeStruct(Item, &item, owner);
+    try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
+    try std.testing.expect(item.number == 23);
+}
+
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
+/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
+/// > ['spam', 'eggs'].
+fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Allocator) !void {
+    const info = @typeInfo(Array);
+    if (info != .array) @compileError("decodeArray only works with arrays");
+
+    const Child = info.array.child;
+    if (Child == u8) {
+        // TODO:
+        // this can probably be copied directly to the array in .decodeString
+        // but i can't think of how yet. the todo is to figure it out and do it
+        const string: []u8 = undefined;
+        try self.decodeString(&string, owner);
+        if (string.len != array.len) return Error.InvalidValue;
+        std.mem.copyForwards(u8, array.*, string);
+        owner.free(string);
+        return;
+    }
+
+    try self.skip("l");
+
+    var i: usize = 0;
+    while (self.charsRemaining()) : (i += 1) {
+        if (self.char() == 'e') break;
+        if (i >= array.len) return Error.TooManyElements;
+        try self.decodeAny(Child, &array[i], owner);
+    }
+
+    try self.skip("e");
+}
+
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
+/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
+/// > ['spam', 'eggs'].
+fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Allocator) !void {
+    const info = @typeInfo(Slice);
+    if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
+
+    const Child = info.pointer.child;
+    if (Child == u8) {
+        try self.decodeString(slice, owner);
+        return;
+    }
+
+    try self.skip("l");
+
+    var list = std.ArrayList(Child).init(owner);
+    defer list.deinit();
+
+    while (self.charsRemaining()) {
+        if (self.char() == 'e') break;
+        var child: Child = undefined;
+        try self.decodeAny(Child, &child, owner);
+        try list.append(child);
+    }
+
+    slice.* = try list.toOwnedSlice();
+    try self.skip("e");
+}
+
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
 fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
     const start: usize = self.cursor;
@@ -65,8 +180,17 @@ fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
     if (self.cursor + length > self.message.len) return Error.StringOutOfBounds;
 
     slice.* = try owner.alloc(u8, length);
-    std.mem.copyForwards(u8, slice.*, self.message[self.cursor..]);
-    self.cursor = self.cursor + length;
+    std.mem.copyForwards(u8, slice.*, self.message[self.cursor .. self.cursor + length]);
+    self.cursor += length;
+}
+
+test "decodeString" {
+    var decoder = Decoder.init("10:abcdefghij"[0..]);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var string: []u8 = undefined;
+    const owner = gpa.allocator();
+    try decoder.decodeString(&string, owner);
+    try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -105,95 +229,11 @@ fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
     t.* = try std.fmt.parseInt(T, number, 10);
 }
 
-/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
-/// > Dictionaries are encoded as a 'd' followed by a list of alternating keys
-/// > and their corresponding values followed by an 'e'. For example,
-/// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
-/// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
-/// > and appear in sorted order (sorted as raw strings, not alphanumerics).
-fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
-    const NullableT = Nullable(T);
-    var n = NullableT{};
-
-    try self.skip("d");
-    while (self.charsRemaining()) {
-        if (self.char() == 'e') break;
-        const key = try self.decodeString();
-
-        var unmatched = true;
-        inline for (std.meta.fields(T)) |field| {
-            const F = field.type;
-            if (std.mem.eql(u8, key, field.name)) {
-                if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
-                var f: F = undefined;
-                try self.decodeAny(F, &f, owner);
-                @field(n, field.name) = f;
-            }
-        }
-
-        if (unmatched) return Error.InvalidField;
-    }
-
-    try unwrapNullable(T, t, n);
-    try self.skip("e");
-}
-
-/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
-/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
-/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
-/// > ['spam', 'eggs'].
-fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Allocator) !void {
-    const info = @typeInfo(Array);
-    if (info != .array) @compileError("decodeArray only works with arrays");
-
-    const Child = info.array.child;
-    if (Child == u8) {
-        const string = try self.decodeString();
-        if (string.len != array.len) return Error.InvalidValue;
-        for (0..string.len) |i| array[i] = string[i];
-        return array;
-    }
-
-    try self.skip("l");
-
-    var i: usize = 0;
-    while (self.charsRemaining()) : (i += 1) {
-        if (self.char() == 'e') break;
-        if (i >= array.len) return Error.TooManyElements;
-        self.decodeAny(Child, &array[i], owner);
-    }
-
-    try self.skip("e");
-}
-
-/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
-/// > Lists are encoded as an 'l' followed by their elements (also bencoded)
-/// > followed by an 'e'. For example l4:spam4:eggse corresponds to
-/// > ['spam', 'eggs'].
-fn decodeSlice(self: *Decoder, comptime Slice: type, slice: Slice, owner: Allocator) !Slice {
-    const info = @typeInfo(Slice);
-    if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
-
-    const Child = info.pointer.child;
-
-    if (Child == u8) {
-        return try self.decodeString(&slice, owner);
-    }
-
-    try self.skip("l");
-
-    var list = std.ArrayList(Child).init(owner);
-    defer list.deinit();
-
-    while (self.charsRemaining()) {
-        if (self.char() == 'e') break;
-        var child: Child = undefined;
-        try self.decodeAny(Child, &child, owner);
-        try list.append(child);
-    }
-
-    slice.* = try list.toOwnedSlice();
-    try self.skip("e");
+test "decodeBool" {
+    var decoder = Decoder.init("i23e"[0..]);
+    var number: usize = undefined;
+    try decoder.decodeInteger(usize, &number);
+    try std.testing.expect(number == 23);
 }
 
 fn decodeBool(self: *Decoder, b: *bool) !bool {
@@ -203,8 +243,7 @@ fn decodeBool(self: *Decoder, b: *bool) !bool {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
-    const ti = @typeInfo(T);
-    switch (ti) {
+    switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
         .array => try self.decodeArray(T, t, owner),
