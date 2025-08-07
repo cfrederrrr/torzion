@@ -75,10 +75,9 @@ fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
 
 test "decodeString" {
     var decoder = Decoder.init("10:abcdefghij"[0..]);
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var string: []u8 = undefined;
-    const owner = gpa.allocator();
-    try decoder.decodeString(&string, owner);
+    try decoder.decodeString(&string, std.testing.allocator);
+    defer std.testing.allocator.free(string);
     try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
 }
 
@@ -140,6 +139,7 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
         if (self.char() == 'e') break;
         var key: []u8 = undefined;
         try self.decodeString(&key, owner);
+        defer owner.free(key);
 
         var unmatched = true;
         inline for (std.meta.fields(T)) |field| {
@@ -168,11 +168,17 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
 
 test "decodeStruct" {
     var decoder = Decoder.init("d6:string10:abcdefghij6:numberi23ee"[0..]);
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const Item = struct { string: []u8, number: usize };
+    const Item = struct {
+        string: []u8,
+        number: usize,
+
+        pub fn deinit(self: *@This(), owner: Allocator) void {
+            owner.free(self.string);
+        }
+    };
     var item: Item = undefined;
-    const owner = gpa.allocator();
-    try decoder.decode(&item, owner);
+    try decoder.decode(&item, std.testing.allocator);
+    defer item.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
     try std.testing.expect(item.number == 23);
 }
@@ -192,6 +198,7 @@ fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Alloc
         // but i can't think of how yet. the todo is to figure it out and do it
         const string: []u8 = undefined;
         try self.decodeString(&string, owner);
+        defer owner.free(string);
         if (string.len != array.len) return Error.InvalidValue;
         std.mem.copyForwards(u8, array.*, string);
         owner.free(string);
@@ -210,13 +217,31 @@ fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Alloc
     try self.skip("e");
 }
 
+test "decodeArray" {
+    var decoder = Decoder.init("ld6:string10:abcdefghij6:numberi23eee"[0..]);
+    const Item = struct {
+        string: []u8,
+        number: usize,
+
+        pub fn deinit(self: *@This(), owner: Allocator) void {
+            owner.free(self.string);
+        }
+    };
+    var items: [1]Item = undefined;
+    try decoder.decode(&items, std.testing.allocator);
+    defer for (&items) |*item| item.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
+    try std.testing.expect(items[0].number == 23);
+}
+
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// > Lists are encoded as an 'l' followed by their elements (also bencoded)
 /// > followed by an 'e'. For example l4:spam4:eggse corresponds to
 /// > ['spam', 'eggs'].
 fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Allocator) !void {
     const info = @typeInfo(Slice);
-    if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
+    if (info != .pointer or info.pointer.size != .slice)
+        @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
 
     const Child = info.pointer.child;
     if (Child == u8) {
@@ -240,9 +265,43 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
     try self.skip("e");
 }
 
-fn decodeBool(self: *Decoder, b: *bool) !bool {
-    const num = try self.decodeInteger(usize);
-    b.* = if (num == 1) true else if (num == 0) false else error.InvalidValue;
+test "decodeSlice" {
+    var decoder = Decoder.init("ld6:string10:abcdefghij6:numberi23eee"[0..]);
+    const Item = struct {
+        string: []u8,
+        number: usize,
+
+        pub fn deinit(self: *@This(), owner: Allocator) void {
+            owner.free(self.string);
+        }
+    };
+    var items: []Item = undefined;
+    try decoder.decode(&items, std.testing.allocator);
+
+    defer {
+        for (items) |*item| item.deinit(std.testing.allocator);
+        std.testing.allocator.free(items);
+    }
+
+    try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
+    try std.testing.expect(items[0].number == 23);
+}
+
+fn decodeBool(self: *Decoder, b: *bool) !void {
+    var num: usize = 2;
+    try self.decodeInteger(usize, &num);
+    switch (num) {
+        1 => b.* = true,
+        0 => b.* = false,
+        else => return Error.InvalidValue,
+    }
+}
+
+test "decodeBool" {
+    var decoder = Decoder.init("i1e"[0..]);
+    var b: bool = false;
+    try decoder.decode(&b, std.testing.allocator);
+    try std.testing.expect(b);
 }
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
