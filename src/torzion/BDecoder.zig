@@ -43,6 +43,89 @@ pub fn decode(self: *Decoder, any: anytype, owner: Allocator) !void {
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
+fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
+    const start: usize = self.cursor;
+    while (self.cursor < self.message.len) : (self.cursor += 1) {
+        switch (self.message[self.cursor]) {
+            '0'...'9' => {},
+            ':' => break,
+            else => return Error.InvalidCharacter,
+        }
+    }
+
+    // the only way this can by anything but : is if we reached EOF
+    // self.skip could suffice here, but we have to check if there's a colon
+    // before we try to read the unsigned because otherwise we won't be able to
+    // self.skip after it's parsed since there's no colon to skip and we'll get a
+    // weird error
+    if (self.message[self.cursor] != ':')
+        return Error.FormatError;
+
+    const length: usize = try std.fmt.parseUnsigned(usize, self.message[start..self.cursor], 10);
+    // now that we know it's a colon and that the unsigned has been parsed, we can
+    // increment the cursor
+    self.cursor += 1;
+    if (self.cursor + length > self.message.len) return Error.StringOutOfBounds;
+
+    slice.* = try owner.alloc(u8, length);
+    std.mem.copyForwards(u8, slice.*, self.message[self.cursor .. self.cursor + length]);
+    self.cursor += length;
+}
+
+test "decodeString" {
+    var decoder = Decoder.init("10:abcdefghij"[0..]);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var string: []u8 = undefined;
+    const owner = gpa.allocator();
+    try decoder.decodeString(&string, owner);
+    try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
+}
+
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
+/// > Integers are represented by an 'i' followed by the number in base 10
+/// > followed by an 'e'. For example i3e corresponds to 3 and i-3e corresponds
+/// > to -3. Integers have no size limitation. i-0e is invalid. All encodings
+/// > with a leading zero, such as i03e, are invalid, other than i0e, which of
+/// > course corresponds to 0.
+fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
+    if (self.message[self.cursor] != 'i')
+        return Error.FormatError;
+
+    self.cursor += 1;
+    const start: usize = self.cursor;
+    while (self.cursor < self.message.len) : (self.cursor += 1) {
+        switch (self.message[self.cursor]) {
+            '-', '0'...'9' => {},
+            'e' => break,
+            else => return Error.FormatError,
+        }
+    }
+
+    const number = self.message[start..self.cursor];
+
+    // skip the e
+    self.cursor += 1;
+
+    // i-0e is invalid.
+    if (std.mem.eql(u8, number, "-0"))
+        return Error.FormatError;
+
+    // All encodings with a leading zero, such as i03e, are invalid, other than i0e
+    if (self.cursor > 3 and number[0] == '0')
+        return Error.FormatError;
+
+    t.* = try std.fmt.parseInt(T, number, 10);
+}
+
+test "decodeInteger" {
+    var decoder = Decoder.init("i23e"[0..]);
+    var number: usize = undefined;
+    try decoder.decodeInteger(usize, &number);
+    try std.testing.expect(number == 23);
+}
+
+/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// > Dictionaries are encoded as a 'd' followed by a list of alternating keys
 /// > and their corresponding values followed by an 'e'. For example,
 /// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
@@ -155,89 +238,6 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
 
     slice.* = try list.toOwnedSlice();
     try self.skip("e");
-}
-
-/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
-/// Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
-fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
-    const start: usize = self.cursor;
-    while (self.cursor < self.message.len) : (self.cursor += 1) {
-        switch (self.message[self.cursor]) {
-            '0'...'9' => {},
-            ':' => break,
-            else => return Error.InvalidCharacter,
-        }
-    }
-
-    // the only way this can by anything but : is if we reached EOF
-    // self.skip could suffice here, but we have to check if there's a colon
-    // before we try to read the unsigned because otherwise we won't be able to
-    // self.skip after it's parsed since there's no colon to skip and we'll get a
-    // weird error
-    if (self.message[self.cursor] != ':')
-        return Error.FormatError;
-
-    const length: usize = try std.fmt.parseUnsigned(usize, self.message[start..self.cursor], 10);
-    // now that we know it's a colon and that the unsigned has been parsed, we can
-    // increment the cursor
-    self.cursor += 1;
-    if (self.cursor + length > self.message.len) return Error.StringOutOfBounds;
-
-    slice.* = try owner.alloc(u8, length);
-    std.mem.copyForwards(u8, slice.*, self.message[self.cursor .. self.cursor + length]);
-    self.cursor += length;
-}
-
-test "decodeString" {
-    var decoder = Decoder.init("10:abcdefghij"[0..]);
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var string: []u8 = undefined;
-    const owner = gpa.allocator();
-    try decoder.decodeString(&string, owner);
-    try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
-}
-
-/// https://www.bittorrent.org/beps/bep_0003.html#bencoding
-/// > Integers are represented by an 'i' followed by the number in base 10
-/// > followed by an 'e'. For example i3e corresponds to 3 and i-3e corresponds
-/// > to -3. Integers have no size limitation. i-0e is invalid. All encodings
-/// > with a leading zero, such as i03e, are invalid, other than i0e, which of
-/// > course corresponds to 0.
-fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
-    if (self.message[self.cursor] != 'i')
-        return Error.FormatError;
-
-    self.cursor += 1;
-    const start: usize = self.cursor;
-    while (self.cursor < self.message.len) : (self.cursor += 1) {
-        switch (self.message[self.cursor]) {
-            '-', '0'...'9' => {},
-            'e' => break,
-            else => return Error.FormatError,
-        }
-    }
-
-    const number = self.message[start..self.cursor];
-
-    // skip the e
-    self.cursor += 1;
-
-    // i-0e is invalid.
-    if (std.mem.eql(u8, number, "-0"))
-        return Error.FormatError;
-
-    // All encodings with a leading zero, such as i03e, are invalid, other than i0e
-    if (self.cursor > 3 and number[0] == '0')
-        return Error.FormatError;
-
-    t.* = try std.fmt.parseInt(T, number, 10);
-}
-
-test "decodeBool" {
-    var decoder = Decoder.init("i23e"[0..]);
-    var number: usize = undefined;
-    try decoder.decodeInteger(usize, &number);
-    try std.testing.expect(number == 23);
 }
 
 fn decodeBool(self: *Decoder, b: *bool) !bool {
