@@ -33,9 +33,13 @@ pub fn init(message: []const u8) Decoder {
 /// Always decodes from the start of self.message.
 /// In almost all cases, this should only ever be called once per message as it invalidates any objects previously parsed.
 /// The only reason to call it twice is to recover from an error in a previous call to .decode().
-pub fn decode(self: *Decoder, any: anytype) !void {
+pub fn decode(self: *Decoder, any: anytype, owner: Allocator) !void {
     self.cursor = 0;
-    return self.decodeAny(any);
+    const T = @TypeOf(any);
+    switch (@typeInfo(T)) {
+        .pointer => |o| try self.decodeAny(o.child, any, owner),
+        else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
+    }
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -85,7 +89,7 @@ test "decodeStruct" {
     const Item = struct { string: []u8, number: usize };
     var item: Item = undefined;
     const owner = gpa.allocator();
-    try decoder.decodeStruct(Item, &item, owner);
+    try decoder.decode(&item, owner);
     try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
     try std.testing.expect(item.number == 23);
 }
