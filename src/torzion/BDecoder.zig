@@ -8,12 +8,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Decoder = @This();
-
 cursor: usize = 0,
 message: []const u8,
-allocator: std.heap.ArenaAllocator,
-
-// result: anytype??????????
 
 pub const Error = error{
     FormatError,
@@ -27,34 +23,24 @@ pub const Error = error{
     UnexpectedToken,
 };
 
-pub fn init(allocator: Allocator, message: []const u8) !Decoder {
-    const owned = try allocator.alloc(u8, message.len);
-    std.mem.copyForwards(u8, owned, message);
+pub fn init(message: []const u8) Decoder {
     return .{
         .cursor = 0,
-        .allocator = std.heap.ArenaAllocator.init(allocator),
-        .message = owned,
+        .message = message,
     };
 }
 
-pub fn deinit(self: *Decoder) void {
-    self.cursor = 0;
-    self.allocator.deinit();
-    self.allocator.allocator().free(self.message);
-}
-
-/// Always decodes from the start of self.message and frees any memory allocated during a previous call to .decode().
+/// Always decodes from the start of self.message.
 /// In almost all cases, this should only ever be called once per message as it invalidates any objects previously parsed.
 /// The only reason to call it twice is to recover from an error in a previous call to .decode().
 pub fn decode(self: *Decoder, any: anytype) !void {
     self.cursor = 0;
-    _ = self.allocator.reset(.free_all);
     return self.decodeAny(any);
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// Strings are length-prefixed base ten followed by a colon and the string. For example 4:spam corresponds to 'spam'.
-pub fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
+fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
     const start: usize = self.cursor;
     while (self.cursor < self.message.len) : (self.cursor += 1) {
         switch (self.message[self.cursor]) {
@@ -89,7 +75,7 @@ pub fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
 /// > to -3. Integers have no size limitation. i-0e is invalid. All encodings
 /// > with a leading zero, such as i03e, are invalid, other than i0e, which of
 /// > course corresponds to 0.
-pub fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
+fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
     if (self.message[self.cursor] != 'i')
         return Error.FormatError;
 
@@ -125,7 +111,7 @@ pub fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
 /// > d3:cow3:moo4:spam4:eggse corresponds to {'cow': 'moo', 'spam': 'eggs'} and
 /// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
 /// > and appear in sorted order (sorted as raw strings, not alphanumerics).
-pub fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
+fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
     const NullableT = Nullable(T);
     var n = NullableT{};
 
@@ -156,7 +142,7 @@ pub fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !
 /// > Lists are encoded as an 'l' followed by their elements (also bencoded)
 /// > followed by an 'e'. For example l4:spam4:eggse corresponds to
 /// > ['spam', 'eggs'].
-pub fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Allocator) !void {
+fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Allocator) !void {
     const info = @typeInfo(Array);
     if (info != .array) @compileError("decodeArray only works with arrays");
 
@@ -184,7 +170,7 @@ pub fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: A
 /// > Lists are encoded as an 'l' followed by their elements (also bencoded)
 /// > followed by an 'e'. For example l4:spam4:eggse corresponds to
 /// > ['spam', 'eggs'].
-pub fn decodeSlice(self: *Decoder, comptime Slice: type, slice: Slice, owner: Allocator) !Slice {
+fn decodeSlice(self: *Decoder, comptime Slice: type, slice: Slice, owner: Allocator) !Slice {
     const info = @typeInfo(Slice);
     if (info != .pointer or info.pointer.size != .slice) @compileError("decodeSlice only works with slices, not '" ++ @typeName(Slice) ++ "'");
 
@@ -210,13 +196,13 @@ pub fn decodeSlice(self: *Decoder, comptime Slice: type, slice: Slice, owner: Al
     try self.skip("e");
 }
 
-pub fn decodeBool(self: *Decoder, b: *bool) !bool {
+fn decodeBool(self: *Decoder, b: *bool) !bool {
     const num = try self.decodeInteger(usize);
     b.* = if (num == 1) true else if (num == 0) false else error.InvalidValue;
 }
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
-pub fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
+fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
     const ti = @typeInfo(T);
     switch (ti) {
         .comptime_int, .int => try self.decodeInteger(T, t),
@@ -268,17 +254,17 @@ fn unwrapNullable(comptime T: type, t: *T, nullable: Nullable(T)) !void {
     }
 }
 
-pub fn skip(self: *Decoder, comptime chars: []const u8) !void {
+fn skip(self: *Decoder, comptime chars: []const u8) !void {
     if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
         self.cursor += chars.len
     else
         return Error.UnexpectedToken;
 }
 
-pub fn charsRemaining(self: *Decoder) bool {
+fn charsRemaining(self: *Decoder) bool {
     return self.message.len > self.cursor;
 }
 
-pub fn char(self: *Decoder) u8 {
+fn char(self: *Decoder) u8 {
     return self.message[self.cursor];
 }
