@@ -288,15 +288,6 @@ fn Nullable(comptime T: type) type {
     });
 }
 
-fn unwrapNullable(comptime T: type, t: *T, nullable: Nullable(T)) !void {
-    inline for (std.meta.fields(T)) |field| {
-        @field(t.*, field.name) = @field(nullable, field.name) orelse blk: {
-            if (@typeInfo(field.type) == .optional) break :blk null;
-            return Error.MissingFields;
-        };
-    }
-}
-
 fn skip(self: *Decoder, comptime chars: []const u8) !void {
     if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
         self.cursor += chars.len
