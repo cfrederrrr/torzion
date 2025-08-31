@@ -37,9 +37,48 @@ pub fn decode(self: *Decoder, any: anytype, owner: Allocator) !void {
     self.cursor = 0;
     const T = @TypeOf(any);
     switch (@typeInfo(T)) {
-        .pointer => |o| try self.decodeAny(o.child, any, owner),
+        .pointer => |o| // try
+        self.decodeAny(o.child, any, owner) catch |e| {
+            std.debug.print("-----------\n{s}\n-----------\n\ninvalid char: {c}\n\n", .{
+                self.message[0..self.cursor],
+                self.char(),
+            });
+            return e;
+        },
         else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
     }
+}
+
+test "decode" {
+    var decoder = Decoder.init(@embedFile("Rocky-10.0-x86_64-dvd1.torrent"));
+    // i think this being undefined means there's a bunch of undefined, i.e.
+    // not null slices. maybe it should be a requirement that optionals
+    // default to null?
+    const MetaInfo = @import("MetaInfo.zig");
+    // var mi = try MetaInfo.init(std.testing.allocator);
+    var mi: MetaInfo = undefined;
+    decoder.decode(&mi, std.testing.allocator) catch |err| switch (err) {
+        //
+        Error.InvalidCharacter => {
+            std.debug.print("\n\n-----------\n{s}\n-----------\n\ninvalid char: {c}\n\n", .{
+                decoder.message[0..decoder.cursor],
+                decoder.char(),
+            });
+            return err;
+        },
+        else => return err,
+    };
+    defer mi.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.eql(u8, mi.announce.?, "udp://tracker.opentrackr.org:1337/announce"));
+}
+
+test "malformed decode doesn't leak" {
+    // TODO:
+    // ensure that a malformed structure doesn't leak
+    // when the decoder throws an error
+    //
+    // this almost surely means removing and/or updating
+    // all the errdefers on the rest of this page
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -68,14 +107,17 @@ fn decodeString(self: *Decoder, slice: *[]u8, owner: Allocator) !void {
     self.cursor += 1;
     if (self.cursor + length > self.message.len) return Error.StringOutOfBounds;
 
+    // since we're decoding, this should always be the first allocation. there's
+    // no reason to have an existing allocation already, so we don't realloc.
     slice.* = try owner.alloc(u8, length);
+    errdefer owner.free(slice.*);
     std.mem.copyForwards(u8, slice.*, self.message[self.cursor .. self.cursor + length]);
     self.cursor += length;
 }
 
 test "decodeString" {
     var decoder = Decoder.init("10:abcdefghij"[0..]);
-    var string: []u8 = undefined;
+    var string: []u8 = try std.testing.allocator.alloc(u8, 0);
     try decoder.decodeString(&string, std.testing.allocator);
     defer std.testing.allocator.free(string);
     try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
@@ -133,33 +175,61 @@ test "decodeInteger" {
 fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
     const NullableT = Nullable(T);
     var n = NullableT{};
+    errdefer deinitOwned(n, owner);
 
     try self.skip("d");
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-        var key: []u8 = undefined;
-        try self.decodeString(&key, owner);
+        var key: []u8 = try owner.alloc(u8, 0);
         defer owner.free(key);
+        try self.decodeString(&key, owner);
 
         var unmatched = true;
-        inline for (std.meta.fields(T)) |field| {
-            const F = field.type;
+        inline for (@typeInfo(T).@"struct".fields) |field| {
             if (std.mem.eql(u8, key, field.name)) {
+                const F = switch (@typeInfo(field.type)) {
+                    .optional => |o| o.child,
+                    else => field.type,
+                };
+
                 if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
-                var f: F = undefined;
+                // WARN: this part isn't running for some reason
+                var f: F = f: switch (@typeInfo(F)) {
+                    // this won't play nice with pointers to arrays
+                    // it's probably dumb to have a struct field that is a pointer
+                    // to an array instead of just the array but it should still
+                    // be supported
+                    // TODO: figure out what to do about it
+                    .pointer => |p| {
+                        const zero = try owner.alloc(p.child, 0);
+                        errdefer owner.free(zero);
+                        break :f zero;
+                    },
+                    else => break undefined,
+                };
+                std.debug.print("decoding '{s}' ({s})\n", .{ key, @typeName(F) });
                 try self.decodeAny(F, &f, owner);
+                std.debug.print("decoded '{s}' ({s})\n", .{ key, @typeName(F) });
                 @field(n, field.name) = f;
             }
         }
 
-        if (unmatched) return Error.InvalidField;
+        if (unmatched) {
+            std.debug.print("invalid field: '{s}'\n", .{key});
+            return Error.InvalidField;
+        }
     }
 
-    // try unwrapNullable(T, t, n);
-    inline for (std.meta.fields(T)) |field| {
-        @field(t.*, field.name) = @field(n, field.name) orelse blk: {
-            if (@typeInfo(field.type) == .optional) break :blk null;
+    inline for (@typeInfo(T).@"struct".fields) |field| {
+        if (@typeInfo(field.type) != .optional and @field(n, field.name) == null) {
             return Error.MissingFields;
+        }
+    }
+
+    inline for (@typeInfo(T).@"struct".fields) |field| {
+        @field(t.*, field.name) = switch (@typeInfo(field.type)) {
+            .optional => @field(n, field.name) orelse null,
+            else => @field(n, field.name) orelse unreachable,
         };
     }
 
@@ -176,6 +246,11 @@ test "decodeStruct" {
             owner.free(self.string);
         }
     };
+
+    // var item: Item = .{
+    //     .string = try std.testing.allocator.alloc(u8, 0),
+    //     .number = undefined,
+    // };
     var item: Item = undefined;
     try decoder.decode(&item, std.testing.allocator);
     defer item.deinit(std.testing.allocator);
@@ -196,12 +271,11 @@ fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Alloc
         // TODO:
         // this can probably be copied directly to the array in .decodeString
         // but i can't think of how yet. the todo is to figure it out and do it
-        const string: []u8 = undefined;
+        const string: []u8 = owner.alloc(u8, 0);
+        defer owner.free(string); // ???
         try self.decodeString(&string, owner);
-        defer owner.free(string);
         if (string.len != array.len) return Error.InvalidValue;
         std.mem.copyForwards(u8, array.*, string);
-        owner.free(string);
         return;
     }
 
@@ -227,6 +301,7 @@ test "decodeArray" {
             owner.free(self.string);
         }
     };
+
     var items: [1]Item = undefined;
     try decoder.decode(&items, std.testing.allocator);
     defer for (&items) |*item| item.deinit(std.testing.allocator);
@@ -245,7 +320,15 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
 
     const Child = info.pointer.child;
     if (Child == u8) {
-        try self.decodeString(slice, owner);
+        if (info.pointer.is_const) {
+            // we have to remove the const qualifier and reassign upwards from here
+            var string: []u8 = try owner.alloc(u8, 0);
+            errdefer owner.free(string); // ???
+            try self.decodeString(&string, owner);
+            slice.* = string;
+        } else {
+            try self.decodeString(slice, owner);
+        }
         return;
     }
 
@@ -256,7 +339,14 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
 
     while (self.charsRemaining()) {
         if (self.char() == 'e') break;
-        var child: Child = undefined;
+        var child: Child = f: switch (@typeInfo(Child)) {
+            .pointer => |p| {
+                const zero = try owner.alloc(p.child, 0);
+                errdefer owner.free(zero);
+                break :f zero;
+            },
+            else => undefined,
+        };
         try self.decodeAny(Child, &child, owner);
         try list.append(child);
     }
@@ -275,7 +365,7 @@ test "decodeSlice" {
             owner.free(self.string);
         }
     };
-    var items: []Item = undefined;
+    var items: []Item = try std.testing.allocator.alloc(Item, 0);
     try decoder.decode(&items, std.testing.allocator);
 
     defer {
@@ -306,11 +396,11 @@ test "decodeBool" {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
+    std.debug.print("decoding ({s})\n", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
         .array => try self.decodeArray(T, t, owner),
-        .optional => |o| try self.decodeAny(o.child, t, owner),
         .pointer => try self.decodeSlice(T, t, owner),
         .bool => try self.decodeBool(t),
         else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
@@ -345,6 +435,38 @@ fn Nullable(comptime T: type) type {
             .is_tuple = false,
         },
     });
+}
+
+fn deinitOwned(any: anytype, owner: Allocator) void {
+    const T = @TypeOf(any);
+    const ti = @typeInfo(T);
+    switch (ti) {
+        .bool, .comptime_int, .int, .null => {},
+        .optional => if (any) |_| deinitOwned(any.?, owner),
+        .@"struct" => inline for (ti.@"struct".fields) |f| deinitOwned(&@field(any, f.name), owner),
+        .array => for (any) |*i| deinitOwned(i, owner),
+        .pointer => |p| switch (p.size) {
+            .slice => {
+                switch (@typeInfo(p.child)) {
+                    .bool, .comptime_int, .int, .null => {},
+                    .pointer, .array, .@"struct" => for (any) |*i| deinitOwned(i, owner),
+                    else => @compileError("Unsupported type '" ++ @typeName(p.child) ++ "'"),
+                }
+
+                owner.free(any);
+            },
+            .one => switch (@typeInfo(p.child)) {
+                .bool, .comptime_int, .int, .null => {},
+                .optional => if (any.*) |a| deinitOwned(a, owner), // TODO: this is wrong
+                .pointer => deinitOwned(any.*, owner), // TODO: this is wrong
+                .array => for (any) |*i| deinitOwned(i, owner),
+                .@"struct" => |s| inline for (s.fields) |f| deinitOwned(&@field(any.*, f.name), owner),
+                else => @compileError("pointer to single '" ++ @typeName(p.child) ++ "' not supported"),
+            },
+            else => @compileError("Unsupported pointer type '" ++ @typeName(T) ++ "'"),
+        },
+        else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
+    }
 }
 
 fn skip(self: *Decoder, comptime chars: []const u8) !void {

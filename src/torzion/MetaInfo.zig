@@ -10,10 +10,10 @@ pub const Info = struct {
         length: usize,
         path: [][]const u8,
 
-        pub fn deinit(self: *File, allocator: Allocator) void {
+        pub fn deinit(self: *File, owner: Allocator) void {
             var i: usize = 0;
-            while (i < self.path.len) : (i += 1) allocator.free(self.path[i]);
-            allocator.free(self.path);
+            while (i < self.path.len) : (i += 1) owner.free(self.path[i]);
+            owner.free(self.path);
         }
     };
 
@@ -36,7 +36,10 @@ pub const Info = struct {
     private: bool = false,
 };
 
-announce: ?[]const u8,
+@"creation date": ?usize = null, // TODO: figure out which bep this is from
+@"created by": ?[]const u8 = null, // TODO: figure out which bep this is from
+comment: ?[]const u8 = null, // TODO: figure out which bep this is from
+announce: ?[]const u8 = null,
 /// a list of list of list of u8
 /// outer list is the announce-list (or just announce if that key is provided instead
 /// second outer list are tiers, ranked in reverse order of their index
@@ -44,6 +47,15 @@ announce: ?[]const u8,
 /// see https://www.bittorrent.org/beps/bep_0012.html
 @"announce-list": ?[][][]const u8 = null,
 info: Info,
+
+pub fn init(owner: Allocator) !MetaInfo {
+    return MetaInfo{
+        .info = Info{
+            .name = try owner.alloc(u8, 0),
+            .pieces = try owner.alloc(u8, 0),
+        },
+    };
+}
 
 pub fn create(
     path: []const u8,
@@ -71,38 +83,48 @@ pub fn create(
 /// Also, you must provide the same allocator here as you did there
 ///
 /// Instances created by reading a torrent file
-pub fn deinit(self: *MetaInfo, allocator: std.mem.Allocator) void {
+pub fn deinit(self: *MetaInfo, owner: std.mem.Allocator) void {
     //
-    if (self.info.files) |_| {
+    // this would probably be easier if i just wrote a deinit for File
+    if (self.info.files) |files| {
         var i: usize = 0;
-        while (i < self.info.files.?.len) : (i += 1) {
+        while (i < files.len) : (i += 1) {
             var j: usize = 0;
-            while (j < self.info.files.?[i].path.len) : (j += 1) {
-                allocator.free(self.info.files.?[i].path[j]);
+            while (j < files[i].path.len) : (j += 1) {
+                owner.free(files[i].path[j]);
             }
-            allocator.free(self.info.files.?[i].path);
+            owner.free(files[i].path);
         }
-        allocator.free(self.info.files.?);
+
+        for (files) |*file| {
+            file.deinit(owner);
+            // for (file.path) |*segment| {
+            //     owner.free(segment.*);
+            // }
+            // owner.free(file.*);
+        }
+        owner.free(self.info.files.?);
         self.info.files = null;
     }
 
-    allocator.free(self.info.pieces);
+    owner.free(self.info.pieces);
+    owner.free(self.info.name);
 
     if (self.announce) |_| {
-        allocator.free(self.announce.?);
+        owner.free(self.announce.?);
         self.announce = null;
     }
 
-    if (self.@"announce-list") |_| {
+    if (self.@"announce-list") |*list| {
         var i: usize = 0;
-        while (i < self.@"announce-list".?.len) : (i += 1) {
-            var j: usize = self.@"announce-list".?[i].len;
-            while (j < self.@"announce-list".?[i].len) : (j += 1) {
-                allocator.free(self.@"announce-list".?[i][j]);
+        while (i < list.len) : (i += 1) {
+            var j: usize = list.*[i].len;
+            while (j < list.*[i].len) : (j += 1) {
+                owner.free(list.*[i][j]);
             }
-            allocator.free(self.@"announce-list".?[i]);
+            owner.free(list.*[i]);
         }
-        allocator.free(self.@"announce-list".?);
+        owner.free(list.*);
         self.@"announce-list" = null;
     }
 }

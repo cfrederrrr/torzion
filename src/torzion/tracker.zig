@@ -112,8 +112,7 @@ pub const Announcement = struct {
 };
 
 pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement: Announcement) ![]Response {
-    // try self.meta_info.infoHash(allocator);
-
+    //
     var client = http.Client{ .allocator = allocator };
     defer client.deinit();
 
@@ -142,6 +141,7 @@ pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement:
 }
 
 fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []const u8, announcement: Announcement) !Response {
+    //
     var uri = try std.Uri.parse(url);
     const query = try announcement.toString(allocator);
     defer allocator.free(query);
@@ -177,6 +177,10 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
     //
     // do we empower the decoder to decode multiple messages and track ownership there?
     // no way.
+    //
+    // maybe the decoder should have a `.decodeOwned(T, item) !void` method that parses and
+    // then copies the data to a provided item rather than returning it. or maybe the
+    // .decode function should just have that behavior by default.
     defer decoder.deinit();
     const ok = decoder.decode(Response.OK) catch return decoder.decode(Response.Failure);
 
