@@ -30,6 +30,20 @@ pub fn init(message: []const u8) Decoder {
     };
 }
 
+fn skip(self: *Decoder, comptime chars: []const u8) !void {
+    if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
+        self.cursor += chars.len
+    else
+        return Error.UnexpectedToken;
+}
+
+fn charsRemaining(self: *Decoder) bool {
+    return self.message.len > self.cursor;
+}
+
+fn char(self: *Decoder) u8 {
+    return self.message[self.cursor];
+}
 /// Always decodes from the start of self.message.
 /// In almost all cases, this should only ever be called once per message as it invalidates any objects previously parsed.
 /// The only reason to call it twice is to recover from an error in a previous call to .decode().
@@ -130,10 +144,11 @@ test "decodeString" {
 /// > with a leading zero, such as i03e, are invalid, other than i0e, which of
 /// > course corresponds to 0.
 fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
-    if (self.message[self.cursor] != 'i')
-        return Error.FormatError;
-
-    self.cursor += 1;
+    // if (self.message[self.cursor] != 'i')
+    //     return Error.FormatError;
+    //
+    // self.cursor += 1;
+    try self.skip("i");
     const start: usize = self.cursor;
     while (self.cursor < self.message.len) : (self.cursor += 1) {
         switch (self.message[self.cursor]) {
@@ -182,42 +197,42 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
         if (self.char() == 'e') break;
         var key: []u8 = try owner.alloc(u8, 0);
         defer owner.free(key);
+
         try self.decodeString(&key, owner);
 
         var unmatched = true;
         inline for (@typeInfo(T).@"struct".fields) |field| {
             if (std.mem.eql(u8, key, field.name)) {
+                if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
+
                 const F = switch (@typeInfo(field.type)) {
                     .optional => |o| o.child,
                     else => field.type,
                 };
 
-                if (unmatched) unmatched = false else return Error.FieldDefinedTwice;
                 // WARN: this part isn't running for some reason
-                var f: F = f: switch (@typeInfo(F)) {
+                switch (@typeInfo(F)) {
                     // this won't play nice with pointers to arrays
                     // it's probably dumb to have a struct field that is a pointer
                     // to an array instead of just the array but it should still
                     // be supported
                     // TODO: figure out what to do about it
                     .pointer => |p| {
-                        const zero = try owner.alloc(p.child, 0);
-                        errdefer owner.free(zero);
-                        break :f zero;
+                        var f = try owner.alloc(p.child, 0);
+                        errdefer owner.free(f);
+                        try self.decodeAny(F, &f, owner);
+                        @field(n, field.name) = f;
                     },
-                    else => break undefined,
-                };
-                std.debug.print("decoding '{s}' ({s})\n", .{ key, @typeName(F) });
-                try self.decodeAny(F, &f, owner);
-                std.debug.print("decoded '{s}' ({s})\n", .{ key, @typeName(F) });
-                @field(n, field.name) = f;
+                    else => {
+                        var f: F = undefined;
+                        try self.decodeAny(F, &f, owner);
+                        @field(n, field.name) = f;
+                    },
+                }
             }
         }
 
-        if (unmatched) {
-            std.debug.print("invalid field: '{s}'\n", .{key});
-            return Error.InvalidField;
-        }
+        if (unmatched) return Error.InvalidField;
     }
 
     inline for (@typeInfo(T).@"struct".fields) |field| {
@@ -396,7 +411,6 @@ test "decodeBool" {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
-    std.debug.print("decoding ({s})\n", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
@@ -467,19 +481,4 @@ fn deinitOwned(any: anytype, owner: Allocator) void {
         },
         else => @compileError("Unsupported type '" ++ @typeName(T) ++ "'"),
     }
-}
-
-fn skip(self: *Decoder, comptime chars: []const u8) !void {
-    if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
-        self.cursor += chars.len
-    else
-        return Error.UnexpectedToken;
-}
-
-fn charsRemaining(self: *Decoder) bool {
-    return self.message.len > self.cursor;
-}
-
-fn char(self: *Decoder) u8 {
-    return self.message[self.cursor];
 }
