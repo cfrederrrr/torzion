@@ -30,10 +30,16 @@ pub fn build(b: *std.Build) void {
     });
 
     const zig_cli = b.dependency("cli", .{ .target = target, .optimize = optimize });
-    exe_mod.addImport("zig-cli", zig_cli.module("zig-cli"));
-    exe_mod.linkLibrary(zig_cli.artifact("zig-cli"));
-    lib_mod.addImport("zig-cli", zig_cli.module("zig-cli"));
-    lib_mod.linkLibrary(zig_cli.artifact("zig-cli"));
+    exe_mod.addImport("cli", zig_cli.module("cli"));
+    exe_mod.linkLibrary(zig_cli.artifact("cli"));
+    lib_mod.addImport("cli", zig_cli.module("cli"));
+    lib_mod.linkLibrary(zig_cli.artifact("cli"));
+
+    // const zig_nullable = b.dependency("zig_nullable", .{ .target = target, .optimize = optimize });
+    // exe_mod.addImport("nullable", zig_nullable.module("nullable"));
+    // exe_mod.linkLibrary(zig_nullable.artifact("nullable"));
+    // lib_mod.addImport("nullable", zig_nullable.module("nullable"));
+    // lib_mod.linkLibrary(zig_nullable.artifact("nullable"));
 
     b.installArtifact(exe);
 
@@ -41,26 +47,20 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Check if torzion compiles");
     check.dependOn(&exe_check.step);
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
+    // const run_cmd = b.addRunArtifact(exe);
+    // run_cmd.step.dependOn(b.getInstallStep());
+    //
+    // if (b.args) |args| {
+    //     run_cmd.addArgs(args);
+    // }
+    //
+    // const run_step = b.step("run", "Run the app");
+    // run_step.dependOn(&run_cmd.step);
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
-    const lib_unit_tests = b.addTest(.{
-        .root_module = lib_mod,
-    });
-
+    const lib_unit_tests = b.addTest(.{ .root_module = lib_mod });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
-    const exe_unit_tests = b.addTest(.{
-        .root_module = exe_mod,
-    });
-
+    const exe_unit_tests = b.addTest(.{ .root_module = exe_mod });
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");

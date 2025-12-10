@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const builtin = @import("builtin");
-const cli = @import("zig-cli");
+const cli = @import("cli");
 const clitools = @import("tools.zig");
 const help = clitools.help;
 const die = clitools.die;

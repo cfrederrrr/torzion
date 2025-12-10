@@ -2,7 +2,6 @@
 const std = @import("std");
 const http = std.http;
 
-const Peer = @import("Peer.zig");
 const MetaInfo = @import("MetaInfo.zig");
 
 const Decoder = @import("BDecoder.zig");
@@ -34,12 +33,12 @@ pub const Response = union(enum) {
         /// seconds the downloader should wait between regular rerequests,
         interval: u32,
 
-        /// and peers. peers maps to a list of dictionaries corresponding to peers,
-        /// each of which contains the keys peer id, ip, and port, which map to the
-        /// peer's self-selected ID, IP address or dns name as a string, and port
-        /// number, respectively. Note that downloaders may rerequest on
-        /// nonscheduled times if an event happens or they need more peers.
-        peers: []Peer,
+        // /// and peers. peers maps to a list of dictionaries corresponding to peers,
+        // /// each of which contains the keys peer id, ip, and port, which map to the
+        // /// peer's self-selected ID, IP address or dns name as a string, and port
+        // /// number, respectively. Note that downloaders may rerequest on
+        // /// nonscheduled times if an event happens or they need more peers.
+        // peers: []Peer,
     };
 };
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const cli = @import("zig-cli");
+const cli = @import("cli");
 const clitools = @import("tools.zig");
 const help = clitools.help;
 const die = clitools.die;
@@ -120,8 +120,10 @@ pub fn run() !void {
             die("couldn't write to file {s}: {s}", .{ o, @errorName(err) }, 1);
         outfile.close();
     } else {
-        const stdout = std.io.getStdOut().writer();
-        try std.fmt.format(stdout, "{s}\n", .{encoder.result()});
+        // const stdout = std.Io.File.stdout().writeStreaming("failed to parse\n");
+        var stdout_writer = std.fs.File.stderr().writer(&.{});
+        var stdout = &stdout_writer.interface;
+        try stdout.print("failed to parse", .{});
     }
 }
 
