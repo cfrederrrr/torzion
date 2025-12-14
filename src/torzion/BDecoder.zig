@@ -52,11 +52,16 @@ pub fn char(self: *Decoder) u8 {
 /// The only reason to call it twice is to recover from an error in a previous call to .decode().
 pub fn decode(self: *Decoder, any: anytype, owner: Allocator) !void {
     self.cursor = 0;
+
+    // var owner = ArenaAllocator.init(allocator);
+
     const T = @TypeOf(any);
     switch (@typeInfo(T)) {
         .pointer => |o| try self.decodeAny(o.child, any, owner),
         else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
     }
+
+    // return owner;
 }
 
 test "decode" {
@@ -64,8 +69,9 @@ test "decode" {
     const MetaInfo = @import("MetaInfo.zig");
     var mi: MetaInfo = undefined;
 
-    decoder.decode(&mi, std.testing.allocator) catch {};
-    defer mi.deinit(std.testing.allocator);
+    var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer owner.deinit();
+    try decoder.decode(&mi, owner.allocator());
     try std.testing.expect(std.mem.eql(u8, mi.announce.?, "udp://tracker.opentrackr.org:1337/announce"));
 }
 
@@ -224,7 +230,9 @@ test "decodeStruct" {
     //     .number = undefined,
     // };
     var item: Item = undefined;
+    var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     try decoder.decode(&item, std.testing.allocator);
+    defer owner.deinit();
     try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
     try std.testing.expect(item.number == 23);
 }
@@ -269,7 +277,9 @@ test "decodeArray" {
     };
 
     var items: [1]Item = undefined;
+    var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     try decoder.decode(&items, std.testing.allocator);
+    defer owner.deinit();
     try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
     try std.testing.expect(items[0].number == 23);
 }
@@ -298,25 +308,21 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
 
     try self.skip("l");
 
-    var list = try std.ArrayList(Child).initCapacity(owner, 1);
-    defer list.deinit(owner);
+    var i: usize = 0;
+    var list = try owner.alloc(Child, i);
 
-    while (self.charsRemaining()) {
+    while (self.charsRemaining()) : (i += 1) {
         if (self.char() == 'e') break;
-        // var child: Child = f: switch (@typeInfo(Child)) {
-        //     .pointer => |p| {
-        //         const zero = try owner.alloc(p.child, 0);
-        //         errdefer owner.free(zero);
-        //         break :f zero;
-        //     },
-        //     else => undefined,
-        // };
-        var child: Child = undefined;
+        var child: Child = switch (@typeInfo(Child)) {
+            .pointer => |p| try owner.alloc(p.child, 0),
+            else => undefined,
+        };
+        list = try owner.realloc(list, i + 1);
         try self.decodeAny(Child, &child, owner);
-        try list.append(owner, child);
+        list[i] = child;
     }
 
-    slice.* = try list.toOwnedSlice(owner);
+    slice.* = list;
     try self.skip("e");
 }
 
@@ -328,9 +334,9 @@ test "decodeSlice" {
     };
 
     var items: []Item = try std.testing.allocator.alloc(Item, 0);
-    try decoder.decode(&items, std.testing.allocator);
-
-    defer std.testing.allocator.free(items);
+    var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
+    try decoder.decode(&items, owner.allocator());
+    defer owner.deinit();
 
     try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
     try std.testing.expect(items[0].number == 23);
@@ -349,7 +355,9 @@ fn decodeBool(self: *Decoder, b: *bool) !void {
 test "decodeBool" {
     var decoder = Decoder.init("i1e"[0..]);
     var b: bool = false;
+    var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     try decoder.decode(&b, std.testing.allocator);
+    defer owner.deinit();
     try std.testing.expect(b);
 }
 
