@@ -4,8 +4,6 @@ pub const tracker = @import("torzion/tracker.zig");
 pub const BEncoder = @import("torzion/BEncoder.zig");
 pub const BDecoder = @import("torzion/BDecoder.zig");
 
-pub const Peer = @import("torzion/Peer.zig");
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -26,4 +24,8 @@ pub fn encodeTorrent(allocator: Allocator, any: anytype) !BEncoder {
     var encoder = try BEncoder.init(allocator);
     try encoder.encodeAny(any);
     return encoder;
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

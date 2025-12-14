@@ -1,5 +1,7 @@
 const std = @import("std");
-const cli = @import("zig-cli");
+const cli = @import("cli");
+const log = @import("cli/tools.zig").log;
+const die = @import("cli/tools.zig").die;
 
 const CreateTorrent = @import("./cli/CreateTorrent.zig");
 const DownloadTorrent = @import("./cli/DownloadTorrent.zig");
@@ -31,6 +33,11 @@ pub fn main() !void {
         },
     };
 
-    const action = try runner.getAction(&app);
-    try action();
+    log(.debug, "program start", .{});
+
+    // const action = try runner.getAction(&app);
+    const action = runner.getAction(&app) catch |e| die("failed to identify action {s}", .{@errorName(e)}, 1);
+    action() catch |e| die("unknown error {s}", .{@errorName(e)}, 1);
+
+    log(.debug, "program done", .{});
 }

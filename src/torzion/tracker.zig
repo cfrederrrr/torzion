@@ -2,7 +2,6 @@
 const std = @import("std");
 const http = std.http;
 
-const Peer = @import("Peer.zig");
 const MetaInfo = @import("MetaInfo.zig");
 
 const Decoder = @import("BDecoder.zig");
@@ -34,12 +33,12 @@ pub const Response = union(enum) {
         /// seconds the downloader should wait between regular rerequests,
         interval: u32,
 
-        /// and peers. peers maps to a list of dictionaries corresponding to peers,
-        /// each of which contains the keys peer id, ip, and port, which map to the
-        /// peer's self-selected ID, IP address or dns name as a string, and port
-        /// number, respectively. Note that downloaders may rerequest on
-        /// nonscheduled times if an event happens or they need more peers.
-        peers: []Peer,
+        // /// and peers. peers maps to a list of dictionaries corresponding to peers,
+        // /// each of which contains the keys peer id, ip, and port, which map to the
+        // /// peer's self-selected ID, IP address or dns name as a string, and port
+        // /// number, respectively. Note that downloaders may rerequest on
+        // /// nonscheduled times if an event happens or they need more peers.
+        // peers: []Peer,
     };
 };
 
@@ -112,8 +111,7 @@ pub const Announcement = struct {
 };
 
 pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement: Announcement) ![]Response {
-    // try self.meta_info.infoHash(allocator);
-
+    //
     var client = http.Client{ .allocator = allocator };
     defer client.deinit();
 
@@ -142,6 +140,7 @@ pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement:
 }
 
 fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []const u8, announcement: Announcement) !Response {
+    //
     var uri = try std.Uri.parse(url);
     const query = try announcement.toString(allocator);
     defer allocator.free(query);
@@ -177,6 +176,10 @@ fn sendAnnouncement(allocator: std.mem.Allocator, client: http.Client, url: []co
     //
     // do we empower the decoder to decode multiple messages and track ownership there?
     // no way.
+    //
+    // maybe the decoder should have a `.decodeOwned(T, item) !void` method that parses and
+    // then copies the data to a provided item rather than returning it. or maybe the
+    // .decode function should just have that behavior by default.
     defer decoder.deinit();
     const ok = decoder.decode(Response.OK) catch return decoder.decode(Response.Failure);
 

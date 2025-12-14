@@ -10,10 +10,24 @@ pub const Info = struct {
         length: usize,
         path: [][]const u8,
 
-        pub fn deinit(self: *File, allocator: Allocator) void {
+        /// Use this if decoding from a file. If this struct was created
+        /// programmatically rather than by decoding, use `deinitFully` instead.
+        ///
+        /// This function assumes the strings in the path are owned elsewhere, so it
+        /// only deinits the list of strings
+        pub fn deinit(self: *File, owner: Allocator) void {
+            owner.free(self.path);
+        }
+
+        /// Use this when creating programmatically. If this struct was created by
+        /// decoding from a file rather than programmatically, use `deinitFully` instead.
+        ///
+        /// This function assumes ownership of the strings in the path, unlike one created
+        /// by decoding assumes those strings are owned elsewhere.
+        pub fn deinitFully(self: *File, owner: Allocator) void {
             var i: usize = 0;
-            while (i < self.path.len) : (i += 1) allocator.free(self.path[i]);
-            allocator.free(self.path);
+            while (i < self.path.len) : (i += 1) owner.free(self.path[i]);
+            owner.free(self.path);
         }
     };
 
@@ -36,7 +50,10 @@ pub const Info = struct {
     private: bool = false,
 };
 
-announce: ?[]const u8,
+@"creation date": ?usize = null, // TODO: figure out which bep this is from
+@"created by": ?[]const u8 = null, // TODO: figure out which bep this is from
+comment: ?[]const u8 = null, // TODO: figure out which bep this is from
+announce: ?[]const u8 = null,
 /// a list of list of list of u8
 /// outer list is the announce-list (or just announce if that key is provided instead
 /// second outer list are tiers, ranked in reverse order of their index
@@ -44,6 +61,15 @@ announce: ?[]const u8,
 /// see https://www.bittorrent.org/beps/bep_0012.html
 @"announce-list": ?[][][]const u8 = null,
 info: Info,
+
+pub fn init(owner: Allocator) !MetaInfo {
+    return MetaInfo{
+        .info = Info{
+            .name = try owner.alloc(u8, 0),
+            .pieces = try owner.alloc(u8, 0),
+        },
+    };
+}
 
 pub fn create(
     path: []const u8,
@@ -71,40 +97,85 @@ pub fn create(
 /// Also, you must provide the same allocator here as you did there
 ///
 /// Instances created by reading a torrent file
-pub fn deinit(self: *MetaInfo, allocator: std.mem.Allocator) void {
-    //
-    if (self.info.files) |_| {
-        var i: usize = 0;
-        while (i < self.info.files.?.len) : (i += 1) {
-            var j: usize = 0;
-            while (j < self.info.files.?[i].path.len) : (j += 1) {
-                allocator.free(self.info.files.?[i].path[j]);
-            }
-            allocator.free(self.info.files.?[i].path);
+pub fn deinit(self: *MetaInfo, owner: std.mem.Allocator) void {
+    if (self.info.files) |files| {
+        for (files) |*file| {
+            std.debug.print("freeing file\n", .{});
+            file.deinit(owner);
         }
-        allocator.free(self.info.files.?);
+
+        std.debug.print("freeing files\n", .{});
+        owner.free(self.info.files.?);
+
+        std.debug.print("setting files to null\n", .{});
         self.info.files = null;
     }
 
-    allocator.free(self.info.pieces);
+    owner.free(self.info.pieces);
+    owner.free(self.info.name);
 
     if (self.announce) |_| {
-        allocator.free(self.announce.?);
+        std.debug.print("freeing announce\n", .{});
+        owner.free(self.announce.?);
+
+        std.debug.print("setting announce to null\n", .{});
+        self.announce = null;
+    }
+
+    if (self.@"announce-list") |*list| {
+        std.debug.print("freeing announce-list\n", .{});
+        for (list.*) |*sub| {
+            std.debug.print("freeing announce-list sub item\n", .{});
+            owner.free(sub.*);
+        }
+
+        owner.free(list.*);
+        self.@"announce-list" = null;
+    }
+}
+
+/// This should only ever be used on instances created using createArchive()
+/// Also, you must provide the same allocator here as you did there
+///
+/// Instances created by reading a torrent file
+pub fn deinitFully(self: *MetaInfo, owner: std.mem.Allocator) void {
+    //
+    // this would probably be easier if i just wrote a deinit for File
+    if (self.info.files) |files| {
+        for (files) |*file| file.deinitFully(owner);
+        owner.free(self.info.files.?);
+        self.info.files = null;
+    }
+
+    owner.free(self.info.pieces);
+    owner.free(self.info.name);
+
+    if (self.announce) |_| {
+        owner.free(self.announce.?);
         self.announce = null;
     }
 
     if (self.@"announce-list") |_| {
-        var i: usize = 0;
-        while (i < self.@"announce-list".?.len) : (i += 1) {
-            var j: usize = self.@"announce-list".?[i].len;
-            while (j < self.@"announce-list".?[i].len) : (j += 1) {
-                allocator.free(self.@"announce-list".?[i][j]);
-            }
-            allocator.free(self.@"announce-list".?[i]);
+        for (self.@"announce-list".?) |*sub| {
+            for (sub) |*string| owner.free(string.*);
+            owner.free(sub.*);
         }
-        allocator.free(self.@"announce-list".?);
+        owner.free(self.@"announce-list".?);
         self.@"announce-list" = null;
     }
+
+    // if (self.@"announce-list") |_| {
+    //     var i: usize = 0;
+    //     while (i < self.@"announce-list".?.len) : (i += 1) {
+    //         var j: usize = self.@"announce-list".?[i].len;
+    //         while (j < self.@"announce-list".?[i].len) : (j += 1) {
+    //             owner.free(self.@"announce-list".?[i][j]);
+    //         }
+    //         owner.free(self.@"announce-list".?[i]);
+    //     }
+    //     owner.free(self.@"announce-list".?);
+    //     self.@"announce-list" = null;
+    // }
 }
 
 /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
@@ -120,8 +191,8 @@ pub fn createMultiFileTorrent(allocator: std.mem.Allocator, path: []const u8, an
 
     // var directory = try allocator.alloc(MetaInfo.Info.File, file_count);
     // defer allocator.free(directory);
-    var directory = std.ArrayList(MetaInfo.Info.File).init(allocator);
-    defer directory.deinit();
+    var directory = try std.ArrayList(MetaInfo.Info.File).initCapacity(allocator, 1);
+    defer directory.deinit(allocator);
 
     var contents = try allocator.alloc(u8, content_end);
     defer allocator.free(contents);
@@ -139,25 +210,28 @@ pub fn createMultiFileTorrent(allocator: std.mem.Allocator, path: []const u8, an
         contents = try allocator.realloc(contents, content_end + stat.size + (stat.size % piece_length));
         _ = try dir.readFile(entry.path, contents[content_end..]);
 
-        var segments = std.ArrayList([]const u8).init(allocator);
-        defer segments.deinit();
+        var segments = try std.ArrayList([]const u8).initCapacity(allocator, 2);
+        defer segments.deinit(allocator);
 
         var i: usize = 0;
         var it = std.mem.splitScalar(u8, entry.path, @as(u8, std.fs.path.sep));
         while (it.next()) |s| {
             const segment = try allocator.alloc(u8, s.len);
             std.mem.copyForwards(u8, segment, s);
-            try segments.append(segment);
+            try segments.append(allocator, segment);
             i += 1;
         }
 
-        try directory.append(.{ .length = stat.size, .path = try segments.toOwnedSlice() });
+        try directory.append(allocator, .{
+            .length = stat.size,
+            .path = try segments.toOwnedSlice(allocator),
+        });
     }
 
     // per bep3, the last piece should be padded with zeroes if it does not fill out
     // the whole piece with valid data
     // this must be accounted for when hashing the pieces
-    std.crypto.utils.secureZero(u8, contents[content_end..]);
+    std.crypto.secureZero(u8, contents[content_end..]);
 
     const piece_count = 1 + contents.len / piece_length;
     const pieces = try allocator.alloc(u8, 20 * piece_count);
@@ -172,7 +246,7 @@ pub fn createMultiFileTorrent(allocator: std.mem.Allocator, path: []const u8, an
         std.mem.copyForwards(u8, pieces[i * 20 .. 20 + i * 20], piece[0..]);
     }
 
-    const files = try directory.toOwnedSlice();
+    const files = try directory.toOwnedSlice(allocator);
     return .{
         .announce = announce,
         .info = .{
@@ -194,7 +268,7 @@ pub fn createSingleFileTorrent(allocator: Allocator, path: []const u8, announce:
 
     const contents = try allocator.alloc(u8, content_len);
     defer allocator.free(contents);
-    std.crypto.utils.secureZero(u8, contents);
+    std.crypto.secureZero(u8, contents);
 
     _ = try wd.readFile(path, contents);
 

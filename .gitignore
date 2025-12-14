@@ -1,2 +1,4 @@
 .zig-cache
 zig-out
+nvim-dap.lua
+docs/

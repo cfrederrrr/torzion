@@ -1,8 +1,9 @@
 const std = @import("std");
 
 const builtin = @import("builtin");
-const cli = @import("zig-cli");
+const cli = @import("cli");
 const clitools = @import("tools.zig");
+const log = clitools.log;
 const help = clitools.help;
 const die = clitools.die;
 const streql = clitools.streql;
@@ -13,12 +14,28 @@ const MetaInfo = torzion.MetaInfo;
 const DecoderError = torzion.BDecoder.Error;
 
 const exit = std.process.exit;
-const log = std.log;
 
 const Self = @This();
 
 // config options provided via cmdline
 var path: []const u8 = undefined;
+
+fn handleDecodeError(decoder: *torzion.BDecoder, err: anyerror) noreturn {
+    // if (builtin.mode == .Debug) {
+    //     die("{s} at index {d}\n{s}[{c}]{s}", .{
+    //         @errorName(err),
+    //         decoder.cursor,
+    //         decoder.message[0..decoder.cursor],
+    //         decoder.char(),
+    //         decoder.message[decoder.cursor + 1 ..],
+    //     }, 1);
+    // } else {
+    die("{s} at index {d}", .{
+        @errorName(err),
+        decoder.cursor,
+    }, 1);
+    // }
+}
 
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
@@ -56,47 +73,55 @@ pub fn run() !void {
     const wd = std.fs.cwd();
     const stat = try wd.statFile(path);
 
-    const fc = try allocator.alloc(u8, stat.size);
-    _ = try wd.readFile(path, fc);
+    const content = try allocator.alloc(u8, stat.size);
+    _ = try wd.readFile(path, content);
 
-    var decoder = try torzion.BDecoder.init(allocator, fc);
-    defer decoder.deinit();
+    var decoder = torzion.BDecoder.init(content);
 
-    const torrent = decoder.decodeAny(torzion.MetaInfo) catch |e| switch (e) {
+    var mi: torzion.MetaInfo = undefined;
+    decoder.decode(&mi, allocator) catch |e| switch (e) {
         DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        else => return e,
+        DecoderError.InvalidField => die("Invalid field at index {d}", .{decoder.char()}, 1),
+        DecoderError.FormatError => die("FormatError at index {d}", .{decoder.char()}, 1),
+        DecoderError.TooManyElements => die("TooManyElements at index {d}", .{decoder.char()}, 1),
+        DecoderError.StringOutOfBounds => die("StringOutOfBounds at index {d}", .{decoder.char()}, 1),
+        DecoderError.MissingFields => die("MissingFields at index {d}", .{decoder.char()}, 1),
+        DecoderError.InvalidValue => die("InvalidValue at index {d}", .{decoder.char()}, 1),
+        DecoderError.FieldDefinedTwice => die("FieldDefinedTwice at index {d}", .{decoder.char()}, 1),
+        error.Overflow => return e,
+        // error.OutOfMemory => return e,
+        // else => return e,
     };
 
-    const stdout = std.io.getStdOut().writer();
-    _ = try stdout.write("got here");
+    log(.debug, "got here", .{});
 
-    if (torrent.announce) |announce|
-        _ = try std.fmt.format(stdout, "announce: {s}\n", .{announce});
+    if (mi.announce) |announce|
+        log(.info, "announce: {s}", .{announce});
 
-    if (torrent.@"announce-list") |list| {
-        _ = try stdout.write("announce-list:\n");
+    if (mi.@"announce-list") |list| {
+        log(.info, "announce-list:\n", .{});
         for (list) |tier| {
-            for (tier) |announce| _ = try std.fmt.format(stdout, "  - {s}\n", .{announce});
+            for (tier) |announce| log(.info, "  - {s}\n", .{announce});
         }
     }
 
-    _ = try stdout.write("info:\n");
-    _ = try std.fmt.format(stdout, "  name: {s}\n", .{torrent.info.name});
-    _ = try std.fmt.format(stdout, "  piece length: {d}\n", .{torrent.info.@"piece length"});
+    log(.info, "info:\n", .{});
+    log(.info, "  name: {s}\n", .{mi.info.name});
+    log(.info, "  piece length: {d}\n", .{mi.info.@"piece length"});
 
-    if (torrent.info.files) |files| {
-        _ = try stdout.write("  files:\n");
+    if (mi.info.files) |files| {
+        log(.info, "  files:\n", .{});
         for (files) |file| {
             const pretty_path = try std.mem.join(allocator, "/", file.path);
-            _ = try std.fmt.format(stdout, "  - path: {s}\n", .{pretty_path});
+            log(.info, "  - path: {s}\n", .{pretty_path});
             allocator.free(pretty_path);
-            _ = try std.fmt.format(stdout, "  - length: {d}\n", .{file.length});
+            log(.info, "  - length: {d}\n", .{file.length});
         }
     }
 
-    if (torrent.info.length) |length| {
-        try std.fmt.format(stdout, "  length: {d}", .{length});
+    if (mi.info.length) |length| {
+        log(.info, "  length: {d}", .{length});
     }
 }
 
