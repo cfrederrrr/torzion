@@ -4,60 +4,33 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib_mod = b.createModule(.{
-        .root_source_file = b.path("src/torzion.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    //libaries
+    const torzion_mod = b.createModule(.{ .root_source_file = b.path("src/torzion.zig"), .target = target, .optimize = optimize });
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    const torzion = b.addLibrary(.{ .linkage = .static, .name = "torzion", .root_module = torzion_mod });
+    b.installArtifact(torzion);
 
-    exe_mod.addImport("torzion", lib_mod);
-    const lib = b.addLibrary(.{
-        .linkage = .static,
-        .name = "torzion",
-        .root_module = lib_mod,
-    });
+    const cli = b.dependency("cli", .{ .target = target, .optimize = optimize });
 
-    b.installArtifact(lib);
-    const exe = b.addExecutable(.{
-        .name = "torzion",
-        .root_module = exe_mod,
-    });
+    // options
+    const options = b.addOptions();
+    const ignore_invalid_fields = b.option(bool, "ignore_invalid_fields", "") orelse false;
+    options.addOption(bool, "ignore_invalid_fields", ignore_invalid_fields);
+    torzion.root_module.addOptions("options", options);
 
-    const zig_cli = b.dependency("cli", .{ .target = target, .optimize = optimize });
-    exe_mod.addImport("cli", zig_cli.module("cli"));
-    exe_mod.linkLibrary(zig_cli.artifact("cli"));
-    lib_mod.addImport("cli", zig_cli.module("cli"));
-    lib_mod.linkLibrary(zig_cli.artifact("cli"));
+    const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
+    exe_mod.addImport("torzion", torzion_mod);
+    exe_mod.addImport("cli", cli.module("cli"));
+    exe_mod.linkLibrary(cli.artifact("cli"));
 
-    // const zig_nullable = b.dependency("zig_nullable", .{ .target = target, .optimize = optimize });
-    // exe_mod.addImport("nullable", zig_nullable.module("nullable"));
-    // exe_mod.linkLibrary(zig_nullable.artifact("nullable"));
-    // lib_mod.addImport("nullable", zig_nullable.module("nullable"));
-    // lib_mod.linkLibrary(zig_nullable.artifact("nullable"));
-
+    const exe = b.addExecutable(.{ .name = "torzion", .root_module = exe_mod });
     b.installArtifact(exe);
 
     const exe_check = b.addExecutable(.{ .name = "torzion", .root_module = exe_mod });
     const check = b.step("check", "Check if torzion compiles");
     check.dependOn(&exe_check.step);
 
-    // const run_cmd = b.addRunArtifact(exe);
-    // run_cmd.step.dependOn(b.getInstallStep());
-    //
-    // if (b.args) |args| {
-    //     run_cmd.addArgs(args);
-    // }
-    //
-    // const run_step = b.step("run", "Run the app");
-    // run_step.dependOn(&run_cmd.step);
-
-    const lib_unit_tests = b.addTest(.{ .root_module = lib_mod });
+    const lib_unit_tests = b.addTest(.{ .root_module = torzion_mod });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{ .root_module = exe_mod });
