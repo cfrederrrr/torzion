@@ -9,9 +9,19 @@ const json = std.json;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
+const opts = @import("options");
+
+const debug = std.log.debug;
+
 const Decoder = @This();
+
 cursor: usize = 0,
 message: []const u8,
+options: Options = .{},
+
+const Options = struct {
+    ignoreInvalidFields: bool = opts.ignore_invalid_fields,
+};
 
 pub const Error = error{
     FormatError,
@@ -24,13 +34,6 @@ pub const Error = error{
     FieldDefinedTwice,
     UnexpectedToken,
 };
-
-pub fn init(message: []const u8) Decoder {
-    return .{
-        .cursor = 0,
-        .message = message,
-    };
-}
 
 fn skip(self: *Decoder, comptime chars: []const u8) !void {
     if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
@@ -54,6 +57,7 @@ pub fn decode(self: *Decoder, any: anytype, owner: *ArenaAllocator) !void {
     self.cursor = 0;
 
     const T = @TypeOf(any);
+    debug("starting decode of {s}", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .pointer => |o| try self.decodeAny(o.child, any, owner.allocator()),
         else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
@@ -61,13 +65,16 @@ pub fn decode(self: *Decoder, any: anytype, owner: *ArenaAllocator) !void {
 }
 
 test "decode" {
-    var decoder = Decoder.init(@embedFile("data/Rocky-10.0-x86_64-dvd1.torrent"));
+    var decoder = Decoder{ .message = @embedFile("testdata/Rocky-10.0-x86_64-dvd1.torrent") };
     const MetaInfo = @import("MetaInfo.zig");
     var mi: MetaInfo = undefined;
 
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
-    try decoder.decode(&mi, &owner);
+    decoder.decode(&mi, &owner) catch |e| {
+        std.debug.print("{s}\n", .{decoder.message[0..decoder.cursor]});
+        return e;
+    };
     try std.testing.expect(std.mem.eql(u8, mi.announce.?, "udp://tracker.opentrackr.org:1337/announce"));
 }
 
@@ -111,7 +118,7 @@ fn decodeString(self: *Decoder, slice: *[]const u8) !void {
 }
 
 test "decodeString" {
-    var decoder = Decoder.init("10:abcdefghij"[0..]);
+    var decoder = Decoder{ .message = "10:abcdefghij"[0..] };
     var string: []const u8 = undefined;
     try decoder.decodeString(&string);
     try std.testing.expect(std.mem.eql(u8, string, "abcdefghij"));
@@ -155,7 +162,7 @@ fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
 }
 
 test "decodeInteger" {
-    var decoder = Decoder.init("i23e"[0..]);
+    var decoder = Decoder{ .message = "i23e"[0..] };
     var number: usize = undefined;
     try decoder.decodeInteger(usize, &number);
     try std.testing.expect(number == 23);
@@ -168,8 +175,11 @@ test "decodeInteger" {
 /// > d4:spaml1:a1:bee corresponds to {'spam': ['a', 'b']}. Keys must be strings
 /// > and appear in sorted order (sorted as raw strings, not alphanumerics).
 fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
-    const structInfo = @typeInfo(T).@"struct";
-    var fields_seen = [_]bool{false} ** structInfo.fields.len;
+    const info = @typeInfo(T).@"struct";
+    if (info.is_tuple)
+        return self.decodeTuple(T, t, owner);
+
+    var fields_seen = [_]bool{false} ** info.fields.len;
 
     try self.skip("d");
     while (true) {
@@ -178,8 +188,9 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
 
         var key: []const u8 = undefined;
         try self.decodeString(&key);
+        debug("decoding {s}", .{key});
 
-        inline for (structInfo.fields, 0..) |field, i| {
+        inline for (info.fields, 0..) |field, i| {
             if (field.is_comptime) @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ field.name);
 
             if (std.mem.eql(u8, key, field.name)) {
@@ -197,11 +208,13 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
                 break;
             }
         } else {
-            return Error.InvalidField;
+            if (!self.options.ignoreInvalidFields) {
+                return Error.InvalidField;
+            }
         }
     }
 
-    inline for (structInfo.fields, 0..) |field, i| {
+    inline for (info.fields, 0..) |field, i| {
         if (!fields_seen[i]) {
             if (field.defaultValue()) |default| {
                 @field(t, field.name) = default;
@@ -215,7 +228,7 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
 }
 
 test "decodeStruct" {
-    var decoder = Decoder.init("d6:string10:abcdefghij6:numberi23ee"[0..]);
+    var decoder = Decoder{ .message = "d6:string10:abcdefghij6:numberi23ee"[0..] };
     const Item = struct {
         string: []const u8,
         number: usize,
@@ -234,6 +247,16 @@ test "decodeStruct" {
 
     try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
     try std.testing.expect(item.number == 23);
+}
+
+pub fn decodeTuple(self: *Decoder, comptime Tuple: type, tuple: *Tuple, owner: Allocator) !void {
+    const info = @typeInfo(Tuple);
+
+    inline for (info.@"struct".fields) |field| {
+        var value: field.type = undefined;
+        self.decodeAny(field.type, &value, owner);
+        @field(tuple, field.name) = value;
+    }
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -269,7 +292,7 @@ fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Alloc
 }
 
 test "decodeArray" {
-    var decoder = Decoder.init("ld6:string10:abcdefghij6:numberi23eee"[0..]);
+    var decoder = Decoder{ .message = "ld6:string10:abcdefghij6:numberi23eee"[0..] };
     const Item = struct {
         string: []const u8,
         number: usize,
@@ -328,7 +351,7 @@ fn decodeSlice(self: *Decoder, comptime Slice: type, slice: *Slice, owner: Alloc
 }
 
 test "decodeSlice" {
-    var decoder = Decoder.init("ld6:string10:abcdefghij6:numberi23eee"[0..]);
+    var decoder = Decoder{ .message = "ld6:string10:abcdefghij6:numberi23eee"[0..] };
     const Item = struct {
         string: []const u8,
         number: usize,
@@ -355,7 +378,7 @@ fn decodeBool(self: *Decoder, b: *bool) !void {
 }
 
 test "decodeBool" {
-    var decoder = Decoder.init("i1e"[0..]);
+    var decoder = Decoder{ .message = "i1e"[0..] };
     var b: bool = false;
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
@@ -365,6 +388,7 @@ test "decodeBool" {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
+    debug("{s}", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
