@@ -33,11 +33,6 @@ pub fn main() !void {
         },
     };
 
-    log(.debug, "program start", .{});
-
-    // const action = try runner.getAction(&app);
     const action = runner.getAction(&app) catch |e| die("failed to identify action {s}", .{@errorName(e)}, 1);
     action() catch |e| die("unknown error {s}", .{@errorName(e)}, 1);
-
-    log(.debug, "program done", .{});
 }
