@@ -8,6 +8,8 @@ const help = clitools.help;
 const die = clitools.die;
 const streql = clitools.streql;
 
+const stdout = std.fs.File.stdout;
+
 const torzion = @import("torzion");
 const MetaInfo = torzion.MetaInfo;
 
@@ -76,10 +78,11 @@ pub fn run() !void {
     const content = try allocator.alloc(u8, stat.size);
     _ = try wd.readFile(path, content);
 
-    var decoder = torzion.BDecoder.init(content);
+    var decoder = torzion.BDecoder{ .message = content };
 
+    var owner = std.heap.ArenaAllocator.init(allocator);
     var mi: torzion.MetaInfo = undefined;
-    decoder.decode(&mi, allocator) catch |e| switch (e) {
+    decoder.decode(&mi, &owner) catch |e| switch (e) {
         DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         DecoderError.InvalidField => die("Invalid field at index {d}", .{decoder.char()}, 1),
@@ -91,20 +94,29 @@ pub fn run() !void {
         DecoderError.FieldDefinedTwice => die("FieldDefinedTwice at index {d}", .{decoder.char()}, 1),
         error.Overflow => return e,
         // error.OutOfMemory => return e,
-        // else => return e,
+        else => return e, // get rid of this
     };
 
-    log(.debug, "got here", .{});
+    // log(.debug, "got here", .{});
 
-    if (mi.announce) |announce|
-        log(.info, "announce: {s}", .{announce});
+    // if (mi.announce) |announce|
+    //     log(.info, "announce: {s}", .{announce});
+    //
+    // if (mi.@"announce-list") |list| {
+    //     log(.info, "announce-list:\n", .{});
+    //     for (list) |tier| {
+    //         for (tier) |announce| log(.info, "  - {s}\n", .{announce});
+    //     }
+    // }
 
-    if (mi.@"announce-list") |list| {
-        log(.info, "announce-list:\n", .{});
-        for (list) |tier| {
-            for (tier) |announce| log(.info, "  - {s}\n", .{announce});
-        }
-    }
+    // var buffer: [64]u8 = undefined;
+    // var writer = stdout().writer(&buffer);
+    var writer = stdout().writer(&.{});
+
+    const interface = &writer.interface;
+    const formatter = std.json.fmt(mi, .{});
+    try formatter.format(interface);
+    std.process.exit(0);
 
     log(.info, "info:\n", .{});
     log(.info, "  name: {s}\n", .{mi.info.name});
