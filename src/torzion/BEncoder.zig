@@ -1,5 +1,3 @@
-// much of this is borrowed from sphaerophoria https://www.youtube.com/watch?v=fh3i5_61LYk
-
 const std = @import("std");
 const log10 = std.math.log10;
 const pageSize = std.heap.pageSize;
