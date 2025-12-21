@@ -104,7 +104,8 @@ pub fn run() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var torrent = torzion.createTorrent(allocator, path, announce, false, piece_length) catch die("Failed to create torrent", .{}, 1);
+    var owner = std.heap.ArenaAllocator.init(allocator);
+    var torrent = torzion.createTorrent(&owner, path, announce, false, piece_length) catch die("Failed to create torrent", .{}, 1);
     var encoder = torzion.encodeTorrent(allocator, torrent) catch die("Failed to encode torrent", .{}, 1);
 
     defer {
