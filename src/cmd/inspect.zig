@@ -11,7 +11,7 @@ const streql = clitools.streql;
 const stdout = std.fs.File.stdout;
 
 const torzion = @import("torzion");
-const MetaInfo = torzion.MetaInfo;
+const Metainfo = torzion.Metainfo;
 
 const DecoderError = torzion.BDecoder.Error;
 
@@ -79,7 +79,7 @@ pub fn run() !void {
     var decoder = torzion.BDecoder{ .message = content };
 
     var owner = std.heap.ArenaAllocator.init(allocator);
-    var mi: torzion.MetaInfo = undefined;
+    var mi: torzion.Metainfo = undefined;
     decoder.decode(&mi, &owner) catch |e| switch (e) {
         DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),

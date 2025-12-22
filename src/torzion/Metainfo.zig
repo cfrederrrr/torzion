@@ -6,7 +6,7 @@ const Encoder = @import("BEncoder.zig");
 
 const sha1 = std.crypto.hash.Sha1;
 
-const MetaInfo = @This();
+const Metainfo = @This();
 pub const Info = struct {
     cross_seed_entry: ?[]const u8 = null,
     files: ?[]File = null,
@@ -29,10 +29,10 @@ nodes: ?[][]const u8 = null,
 @"url-list": ?[]const u8 = null,
 
 /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
-pub fn indexDirectory(self: *MetaInfo, dir: std.fs.Dir, allocator: Allocator) !void {
+pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !void {
     const plen = self.info.@"piece length";
 
-    var files = try std.ArrayList(MetaInfo.Info.File).initCapacity(allocator, 1);
+    var files = try std.ArrayList(Metainfo.Info.File).initCapacity(allocator, 1);
     defer files.deinit(allocator);
 
     var pctr: usize = 0;
@@ -96,7 +96,7 @@ pub fn indexDirectory(self: *MetaInfo, dir: std.fs.Dir, allocator: Allocator) !v
     self.info.files = try files.toOwnedSlice(allocator);
 }
 
-pub fn indexFile(self: *MetaInfo, file: std.fs.File, allocator: Allocator) !void {
+pub fn indexFile(self: *Metainfo, file: std.fs.File, allocator: Allocator) !void {
     _ = self;
     _ = file;
     _ = allocator;
@@ -108,7 +108,7 @@ test indexDirectory {
     // 3. run it here
 }
 
-pub fn deinit(self: *MetaInfo, owner: std.mem.Allocator) void {
+pub fn deinit(self: *Metainfo, owner: std.mem.Allocator) void {
     if (self.@"announce-list") |_| {
         for (self.@"announce-list".?) |*sub| owner.free(sub.*);
         owner.free(self.@"announce-list".?);

@@ -1,6 +1,6 @@
 const std = @import("std");
 const torzion = @import("torzion");
-const MetaInfo = torzion.MetaInfo;
+const Metainfo = torzion.Metainfo;
 const Message = torzion.Message;
 
 const Self = @This();

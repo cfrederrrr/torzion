@@ -7,7 +7,7 @@ const die = clitools.die;
 const streql = clitools.streql;
 
 const torzion = @import("torzion");
-const MetaInfo = torzion.MetaInfo;
+const Metainfo = torzion.Metainfo;
 
 const Encoder = torzion.BEncoder;
 
@@ -18,7 +18,7 @@ const log = std.log;
 
 const Self = @This();
 
-var torrent: MetaInfo = .{ .info = .{ .name = &[_]u8{} } };
+var torrent: Metainfo = .{ .info = .{ .name = &[_]u8{} } };
 
 // config options provided via cmdline
 var path: []const u8 = undefined;

@@ -65,8 +65,8 @@ pub fn decode(self: *Decoder, any: anytype, owner: *ArenaAllocator) !void {
 
 test "decode" {
     var decoder = Decoder{ .message = @embedFile("testdata/Rocky-10.0-x86_64-dvd1.torrent") };
-    const MetaInfo = @import("MetaInfo.zig");
-    var mi: MetaInfo = undefined;
+    const Metainfo = @import("Metainfo.zig");
+    var mi: Metainfo = undefined;
 
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
