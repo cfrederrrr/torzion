@@ -9,7 +9,7 @@ const streql = clitools.streql;
 const torzion = @import("torzion");
 const Metainfo = torzion.Metainfo;
 
-const Encoder = torzion.BEncoder;
+const Encoder = torzion.Bencoder;
 
 const Allocator = std.mem.Allocator;
 

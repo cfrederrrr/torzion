@@ -57,11 +57,11 @@ pub fn run() !void {
     const fc = try allocator.alloc(u8, stat.size);
     _ = try wd.readFile(path, fc);
 
-    var decoder = try torzion.BDecoder.init(allocator, fc);
+    var decoder = try torzion.Bdecoder.init(allocator, fc);
     defer decoder.deinit();
     const torrent = decoder.decodeAny(torzion.Metainfo) catch |e| switch (e) {
-        torzion.BDecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        torzion.BDecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        torzion.Bdecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+        torzion.Bdecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         else => return e,
     };
 

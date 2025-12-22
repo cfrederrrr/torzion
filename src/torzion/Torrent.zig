@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Decoder = @import("BDecoder.zig");
+const Decoder = @import("Bdecoder.zig");
 const tracker = @import("tracker.zig");
 const protocol = @import("protocol.zig");
 const Peer = protocol.Peer;

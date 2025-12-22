@@ -13,7 +13,7 @@ const stdout = std.fs.File.stdout;
 const torzion = @import("torzion");
 const Metainfo = torzion.Metainfo;
 
-const DecoderError = torzion.BDecoder.Error;
+const DecoderError = torzion.Bdecoder.Error;
 
 const exit = std.process.exit;
 
@@ -22,7 +22,7 @@ const Self = @This();
 // config options provided via cmdline
 var path: []const u8 = undefined;
 
-fn handleDecodeError(decoder: *torzion.BDecoder, err: anyerror) noreturn {
+fn handleDecodeError(decoder: *torzion.Bdecoder, err: anyerror) noreturn {
     // if (builtin.mode == .Debug) {
     //     die("{s} at index {d}\n{s}[{c}]{s}", .{
     //         @errorName(err),
@@ -76,7 +76,7 @@ pub fn run() !void {
     const content = try allocator.alloc(u8, stat.size);
     _ = try wd.readFile(path, content);
 
-    var decoder = torzion.BDecoder{ .message = content };
+    var decoder = torzion.Bdecoder{ .message = content };
 
     var owner = std.heap.ArenaAllocator.init(allocator);
     var mi: torzion.Metainfo = undefined;

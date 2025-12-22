@@ -4,7 +4,7 @@ const http = std.http;
 
 const Metainfo = @import("Metainfo.zig");
 
-const Decoder = @import("BDecoder.zig");
+const Decoder = @import("Bdecoder.zig");
 
 pub const Error = error{
     NoAnnounceDefined,

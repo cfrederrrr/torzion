@@ -10,7 +10,7 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub fn infoHash(self: *Metainfo, allocator: Allocator) ![20]u8 {
     // there's probably a more efficient way to do all this
-    const encoder = try BEncoder.init(allocator);
+    const encoder = try Bencoder.init(allocator);
     defer encoder.deinit();
     try encoder.encodeAny(self.info);
     const out: [20]u8 = undefined;

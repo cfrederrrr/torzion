@@ -2,7 +2,7 @@ const std = @import("std");
 const basename = std.fs.path.basename;
 
 const Allocator = std.mem.Allocator;
-const Encoder = @import("BEncoder.zig");
+const Encoder = @import("Bencoder.zig");
 
 const sha1 = std.crypto.hash.Sha1;
 
