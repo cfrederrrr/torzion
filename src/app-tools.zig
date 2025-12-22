@@ -88,3 +88,5 @@ pub fn die(comptime message: []const u8, args: anytype, code: u8) noreturn {
 pub fn streql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
+
+pub fn option() !void {}

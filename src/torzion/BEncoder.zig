@@ -3,7 +3,7 @@ const log10 = std.math.log10;
 const pageSize = std.heap.pageSize;
 
 cursor: usize = 0,
-message: []u8,
+message: []u8 = &[_]u8{},
 allocator: std.mem.Allocator,
 
 const Encoder = @This();
@@ -24,17 +24,15 @@ pub fn deinit(self: *Encoder) void {
     self.allocator.free(self.message);
 }
 
-pub fn ensureCapacity(self: *Encoder, len: usize) !void {
+fn ensureCapacity(self: *Encoder, len: usize) !void {
     if (self.cursor + len >= self.message.len) {
         // how many pages do we need? len / pageSize()
         const new_len = self.message.len + (1 + len / pageSize()) * pageSize();
-        std.log.debug("reallocating to {d} bytes", .{new_len});
         self.message = try self.allocator.realloc(self.message, new_len);
     }
 }
 
-pub fn write(self: *Encoder, bytes: []const u8) !void {
-    std.log.debug("position={d} message.len={d} bytes.len={d} message='{s}' writing={s}", .{ self.cursor, self.message.len, bytes.len, self.result(), bytes });
+fn write(self: *Encoder, bytes: []const u8) !void {
     try self.ensureCapacity(bytes.len);
     std.mem.copyForwards(u8, self.message[self.cursor..], bytes);
     std.log.debug("done writing", .{});
@@ -65,7 +63,7 @@ fn writeDigits(self: *Encoder, number: usize) !void {
     self.cursor += len;
 }
 
-pub fn encodeString(self: *Encoder, string: []const u8) !void {
+fn encodeString(self: *Encoder, string: []const u8) !void {
     if (string.len == 0)
         return Error.StringCannotBeEmpty;
 
@@ -74,7 +72,7 @@ pub fn encodeString(self: *Encoder, string: []const u8) !void {
     try self.write(string);
 }
 
-pub fn encodeInteger(self: *Encoder, integer: anytype) !void {
+fn encodeInteger(self: *Encoder, comptime Integer: type, integer: Integer) !void {
     const T = @TypeOf(integer);
 
     const number: usize = switch (@typeInfo(T)) {
@@ -93,20 +91,20 @@ pub fn encodeInteger(self: *Encoder, integer: anytype) !void {
     try self.write("e");
 }
 
-pub fn encodeStruct(self: *Encoder, comptime T: type, dict: T) !void {
+fn encodeStruct(self: *Encoder, comptime T: type, dict: T) !void {
     try self.write("d");
 
     inline for (std.meta.fields(T)) |field| {
         switch (@typeInfo(field.type)) {
-            .optional => {
+            .optional => |o| {
                 if (@field(dict, field.name)) |v| {
                     try self.encodeString(field.name);
-                    try self.encodeAny(v);
+                    try self.encodeAny(o.child, v);
                 }
             },
             else => {
                 try self.encodeString(field.name);
-                try self.encodeAny(@field(dict, field.name));
+                try self.encodeAny(field.type, @field(dict, field.name));
             },
         }
     }
@@ -114,17 +112,16 @@ pub fn encodeStruct(self: *Encoder, comptime T: type, dict: T) !void {
     try self.write("e");
 }
 
-pub fn encodeSlice(self: *Encoder, slice: anytype) !void {
-    const Slice = @TypeOf(slice);
+fn encodeSlice(self: *Encoder, comptime Slice: type, slice: Slice) !void {
     const info = @typeInfo(Slice);
     if (info != .pointer and info.pointer.size != .slice) @compileError("encodeSlice only works with slice types");
     if (info.pointer.child == u8) return try self.encodeString(slice);
     try self.write("l");
-    for (slice) |s| try self.encodeAny(s);
+    for (slice) |s| try self.encodeAny(info.pointer.child, s);
     try self.write("e");
 }
 
-pub fn encodeArray(self: *Encoder, array: anytype) !void {
+fn encodeArray(self: *Encoder, array: anytype) !void {
     const Array = @TypeOf(array);
     const info = @typeInfo(Array);
     if (info != .array) @compileError("encodeArray only works with Array types");
@@ -134,17 +131,24 @@ pub fn encodeArray(self: *Encoder, array: anytype) !void {
     try self.write("e");
 }
 
-pub fn encodeAny(self: *Encoder, any: anytype) !void {
-    const T = @TypeOf(any);
-
+fn encodeAny(self: *Encoder, comptime T: type, t: T) !void {
     switch (@typeInfo(T)) {
-        .int => try self.encodeInteger(any),
-        .@"struct" => try self.encodeStruct(T, any),
-        .array => try self.encodeArray(any),
-        .optional => if (any) |a| self.encodeAny(a),
-        .pointer => try self.encodeSlice(any),
-        .bool => try self.encodeAny(@as(usize, if (any) 1 else 0)),
+        .int => try self.encodeInteger(T, t),
+        .@"struct" => try self.encodeStruct(T, t),
+        .array => try self.encodeArray(T, t),
+        .optional => |o| if (t) |a| self.encodeAny(o.child, a),
+        .pointer => try self.encodeSlice(T, t),
+        .bool => try self.encodeAny(usize, if (t) 1 else 0),
         else => @compileError("Non bencodable type provided '" ++ @typeName(T) ++ "'"),
+    }
+}
+
+pub fn encode(self: *Encoder, any: anytype) !void {
+    self.message = try self.allocator.alloc(u8, 0);
+    const T = @TypeOf(any);
+    switch (@typeInfo(T)) {
+        .pointer => |o| return self.encodeAny(o.child, any.*),
+        else => return self.encodeAny(T, any), // @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
     }
 }
 

@@ -1,13 +1,15 @@
 const std = @import("std");
 
 const cli = @import("cli");
-const clitools = @import("tools.zig");
+const clitools = @import("../app-tools.zig");
 const help = clitools.help;
 const die = clitools.die;
 const streql = clitools.streql;
 
 const torzion = @import("torzion");
 const MetaInfo = torzion.MetaInfo;
+
+const Encoder = torzion.BEncoder;
 
 const Allocator = std.mem.Allocator;
 
@@ -16,23 +18,12 @@ const log = std.log;
 
 const Self = @This();
 
-pub const usage =
-    \\Usage: torrentz create [options] path
-    \\
-    \\Options:
-    \\  -h, --help                Display this text and exit
-    \\  -n, --name <str>          Name of torrent
-    \\  -l, --piece-length <int>  The piece length of the torrent (count is determined automatically)
-    \\  -a, --announce <str>...   The announce URL(s) associated to the torrent
-    \\  -o, --out <str>           The path to the output .torrent file
-;
+var torrent: MetaInfo = .{ .info = .{ .name = &[_]u8{} } };
 
 // config options provided via cmdline
 var path: []const u8 = undefined;
-var piece_length: usize = 0x100000;
-var announce: []const u8 = undefined;
-var out: ?[]const u8 = null;
-var private: bool = false;
+var announce: [][]const u8 = undefined;
+var out: []const u8 = "-"; // default to stdout
 
 const InputError = error{
     PathUndefined,
@@ -54,10 +45,8 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
             cli.Option{
                 .short_alias = 'l',
                 .long_name = "piece-length",
-                .required = false,
-                .value_ref = runner.mkRef(&piece_length),
+                .value_ref = runner.mkRef(&torrent.info.@"piece length"),
                 .help = "Piece length",
-                .value_name = "INT",
             },
             cli.Option{
                 .short_alias = 'a',
@@ -65,21 +54,17 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
                 .required = true,
                 .value_ref = runner.mkRef(&announce),
                 .help = "Announce list",
-                .value_name = "STR",
             },
             cli.Option{
                 .short_alias = 'o',
                 .long_name = "out",
-                .required = false,
                 .value_ref = runner.mkRef(&out),
                 .help = "Output .torrent file",
-                .value_name = "STR",
             },
             cli.Option{
                 .short_alias = 'p',
                 .long_name = "private",
-                .required = false,
-                .value_ref = runner.mkRef(&private),
+                .value_ref = runner.mkRef(&torrent.info.private),
                 .help = "Whether the torrent should be marked private - default is false",
             },
         }),
@@ -101,31 +86,36 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
 }
 
 pub fn run() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-    var owner = std.heap.ArenaAllocator.init(allocator);
-    var torrent = torzion.createTorrent(&owner, path, announce, false, piece_length) catch die("Failed to create torrent", .{}, 1);
-    var encoder = torzion.encodeTorrent(allocator, torrent) catch die("Failed to encode torrent", .{}, 1);
-
-    defer {
-        torrent.deinit(allocator);
-        encoder.deinit();
+    const cwd = std.fs.cwd();
+    const stat = try cwd.statFile(path);
+    switch (stat.kind) {
+        .directory => {
+            const dir = try cwd.openDir(path, .{ .iterate = true });
+            try torrent.indexDirectory(dir, allocator);
+        },
+        .file => {
+            const file = try cwd.openFile(path, .{ .mode = .read_only });
+            try torrent.indexFile(file, allocator);
+        },
+        else => {},
     }
 
-    if (out) |o| {
-        const wd = std.fs.cwd();
-        const outfile = wd.createFile(o, .{}) catch |err|
-            die("couldn't open file {s} for for writing: {s}", .{ o, @errorName(err) }, 1);
-        outfile.writeAll(encoder.result()) catch |err|
-            die("couldn't write to file {s}: {s}", .{ o, @errorName(err) }, 1);
-        outfile.close();
-    } else {
-        // const stdout = std.Io.File.stdout().writeStreaming("failed to parse\n");
-        var stdout_writer = std.fs.File.stderr().writer(&.{});
-        var stdout = &stdout_writer.interface;
-        try stdout.print("failed to parse", .{});
-    }
+    defer torrent.deinit(allocator);
+
+    var encoder = Encoder{ .allocator = allocator };
+    try encoder.encode(&torrent);
+
+    const outfile = if (std.mem.eql(u8, out, "-"))
+        std.fs.File.stdout()
+    else
+        cwd.createFile(out, .{}) catch |err| die("couldn't open file {s} for for writing: {s}", .{ out, @errorName(err) }, 1);
+
+    outfile.writeAll(encoder.result()) catch |err| die("couldn't write to file {s}: {s}", .{ out, @errorName(err) }, 1);
+    outfile.close();
 }
 
 pub fn action() anyerror!void {

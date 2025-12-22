@@ -57,7 +57,6 @@ pub fn decode(self: *Decoder, any: anytype, owner: *ArenaAllocator) !void {
     self.cursor = 0;
 
     const T = @TypeOf(any);
-    debug("starting decode of {s}", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .pointer => |o| try self.decodeAny(o.child, any, owner.allocator()),
         else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
@@ -188,7 +187,6 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
 
         var key: []const u8 = undefined;
         try self.decodeString(&key);
-        debug("decoding {s}", .{key});
 
         inline for (info.fields, 0..) |field, i| {
             if (field.is_comptime) @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ field.name);
@@ -360,7 +358,7 @@ test "decodeSlice" {
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
 
-    var items: []Item = try std.testing.allocator.alloc(Item, 0);
+    var items = try std.testing.allocator.alloc(Item, 0);
     try decoder.decode(&items, &owner);
 
     try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));

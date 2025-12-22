@@ -1,33 +1,31 @@
 const std = @import("std");
 const cli = @import("cli");
-const log = @import("cli/tools.zig").log;
-const die = @import("cli/tools.zig").die;
+const tools = @import("app-tools.zig");
+const log = tools.log;
+const die = tools.die;
 
-const CreateTorrent = @import("./cli/CreateTorrent.zig");
-const DownloadTorrent = @import("./cli/DownloadTorrent.zig");
-const InspectTorrent = @import("./cli/InspectTorrent.zig");
-const ParseTorrent = @import("./cli/ParseTorrent.zig");
+const create = @import("./cmd/create.zig");
+const download = @import("./cmd/download.zig");
+const inspect = @import("./cmd/inspect.zig");
+const parse = @import("./cmd/parse.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    var runner = try cli.AppRunner.init(std.heap.page_allocator);
 
-    var runner = try cli.AppRunner.init(allocator);
-
-    const app = cli.App{
+    const app: cli.App = .{
         .option_envvar_prefix = "TORZION_",
-        .command = cli.Command{
+        .command = .{
             .name = "torzion",
-            .description = cli.Description{
+            .description = .{
                 .one_line = "torrent management command line tool",
                 .detailed =
                 \\torzion manages torrents
                 ,
             },
-            .target = cli.CommandTarget{
+            .target = .{
                 .subcommands = try runner.allocCommands(&.{
-                    try CreateTorrent.command(&runner),
-                    try InspectTorrent.command(&runner),
+                    try create.command(&runner),
+                    try inspect.command(&runner),
                 }),
             },
         },

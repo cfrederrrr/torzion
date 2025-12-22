@@ -91,12 +91,16 @@ pub fn indexDirectory(self: *MetaInfo, dir: std.fs.Dir, allocator: Allocator) !v
     }
 
     // hash the last piece
-    sha1.hash(self.pieces[pctr * plen .. (1 + pctr) + plen], &piece, .{});
+    sha1.hash(pieces[pctr * plen .. (1 + pctr) + plen], &piece, .{});
     self.info.pieces = pieces;
     self.info.files = try files.toOwnedSlice(allocator);
 }
 
-pub fn indexFile() void {}
+pub fn indexFile(self: *MetaInfo, file: std.fs.File, allocator: Allocator) !void {
+    _ = self;
+    _ = file;
+    _ = allocator;
+}
 
 test indexDirectory {
     // 1. find a torrent with multiple files
@@ -107,12 +111,12 @@ test indexDirectory {
 pub fn deinit(self: *MetaInfo, owner: std.mem.Allocator) void {
     if (self.@"announce-list") |_| {
         for (self.@"announce-list".?) |*sub| owner.free(sub.*);
-        owner.free(self.@"announce-list");
+        owner.free(self.@"announce-list".?);
         self.@"announce-list" = null;
     }
 
     if (self.httpseeds) |_| {
-        self.free(self.httpseeds.?);
+        owner.free(self.httpseeds.?);
         self.httpseeds = null;
     }
 

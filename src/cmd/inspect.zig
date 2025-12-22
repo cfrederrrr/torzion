@@ -2,7 +2,7 @@ const std = @import("std");
 
 const builtin = @import("builtin");
 const cli = @import("cli");
-const clitools = @import("tools.zig");
+const clitools = @import("../app-tools.zig");
 const log = clitools.log;
 const help = clitools.help;
 const die = clitools.die;
@@ -42,16 +42,14 @@ fn handleDecodeError(decoder: *torzion.BDecoder, err: anyerror) noreturn {
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
         .name = "inspect",
-        .description = .{
-            .one_line = "torzion",
-        },
+        .description = .{ .one_line = "Convert a .torrent file into JSON text" },
         .options = try runner.allocOptions(&.{}),
-        .target = cli.CommandTarget{
-            .action = cli.CommandAction{
+        .target = .{
+            .action = .{
                 .exec = action,
-                .positional_args = cli.PositionalArgs{
+                .positional_args = .{
                     .required = try runner.allocPositionalArgs(&.{
-                        cli.PositionalArg{
+                        .{
                             .value_ref = runner.mkRef(&path),
                             .name = "path",
                             .help = "PATH",
@@ -97,20 +95,6 @@ pub fn run() !void {
         else => return e, // get rid of this
     };
 
-    // log(.debug, "got here", .{});
-
-    // if (mi.announce) |announce|
-    //     log(.info, "announce: {s}", .{announce});
-    //
-    // if (mi.@"announce-list") |list| {
-    //     log(.info, "announce-list:\n", .{});
-    //     for (list) |tier| {
-    //         for (tier) |announce| log(.info, "  - {s}\n", .{announce});
-    //     }
-    // }
-
-    // var buffer: [64]u8 = undefined;
-    // var writer = stdout().writer(&buffer);
     var writer = stdout().writer(&.{});
 
     const interface = &writer.interface;
