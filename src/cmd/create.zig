@@ -21,19 +21,9 @@ const Self = @This();
 var torrent: MetaInfo = .{ .info = .{ .name = &[_]u8{} } };
 
 // config options provided via cmdline
-var path: []const u8 = undefined;
-var announce: [][]const u8 = undefined;
+var path: []const u8 = ".";
+var announce: [][]const u8 = &.{};
 var out: []const u8 = "-"; // default to stdout
-
-const InputError = error{
-    PathUndefined,
-    PathInvalid,
-    AnnounceUndefined,
-    AnnounceInvalid,
-    OutfileUndefined,
-    OutfileInvalid,
-    PieceLengthInvalid,
-};
 
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
@@ -53,7 +43,7 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
                 .long_name = "announce",
                 .required = true,
                 .value_ref = runner.mkRef(&announce),
-                .help = "Announce list",
+                .help = "Comma separated tier of an announce list. Specify --announce more than once for multiple tiers",
             },
             cli.Option{
                 .short_alias = 'o',
@@ -72,7 +62,7 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
             .action = cli.CommandAction{
                 .exec = action,
                 .positional_args = cli.PositionalArgs{
-                    .required = try runner.allocPositionalArgs(&.{
+                    .optional = try runner.allocPositionalArgs(&.{
                         cli.PositionalArg{
                             .value_ref = runner.mkRef(&path),
                             .name = "path",
@@ -90,8 +80,31 @@ pub fn run() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    var announce_list = try allocator.alloc([][]const u8, announce.len);
+
+    var t: usize = 0;
+    for (announce) |tier| {
+        // don't support more than 5 trackers per tier
+        // mainly because nobody needs this, but also because it's easier
+        // and less annoying than making an allocation
+        var trackers: [5][]const u8 = undefined;
+        var it = std.mem.splitScalar(u8, tier, ',');
+        var i: usize = 0;
+        while (it.next()) |tracker| {
+            trackers[i] = tracker;
+            i += 1;
+        }
+
+        // trackers needs to persis outside this scope to be part of announce_list so maybe we need
+        // to allocate after all
+        t += 1;
+    }
+
+    torrent.@"announce-list" = announce_list;
+
     const cwd = std.fs.cwd();
     const stat = try cwd.statFile(path);
+
     switch (stat.kind) {
         .directory => {
             const dir = try cwd.openDir(path, .{ .iterate = true });
