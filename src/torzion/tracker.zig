@@ -2,9 +2,9 @@
 const std = @import("std");
 const http = std.http;
 
-const MetaInfo = @import("MetaInfo.zig");
+const Metainfo = @import("Metainfo.zig");
 
-const Decoder = @import("BDecoder.zig");
+const Decoder = @import("Bdecoder.zig");
 
 pub const Error = error{
     NoAnnounceDefined,
@@ -110,7 +110,7 @@ pub const Announcement = struct {
     }
 };
 
-pub fn announce(allocator: std.mem.Allocator, meta_info: MetaInfo, announcement: Announcement) ![]Response {
+pub fn announce(allocator: std.mem.Allocator, meta_info: Metainfo, announcement: Announcement) ![]Response {
     //
     var client = http.Client{ .allocator = allocator };
     defer client.deinit();

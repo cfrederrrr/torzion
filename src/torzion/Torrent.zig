@@ -1,24 +1,24 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Decoder = @import("BDecoder.zig");
+const Decoder = @import("Bdecoder.zig");
 const tracker = @import("tracker.zig");
 const protocol = @import("protocol.zig");
 const Peer = protocol.Peer;
 const Peers = std.ArrayList(Peer);
 const PeerConnections = std.StringHashMap(Peer.Connection);
-const MetaInfo = @import("MetaInfo.zig");
+const Metainfo = @import("Metainfo.zig");
 
 self: Peer,
 peers: Peers,
 connections: PeerConnections,
-meta: MetaInfo,
+meta: Metainfo,
 incomplete: []const u8,
 bitfield: []const u8,
 
 const Torrent = @This();
 
-pub fn init(allocator: Allocator, meta: MetaInfo, incomplete: []const u8) !Torrent {
+pub fn init(allocator: Allocator, meta: Metainfo, incomplete: []const u8) !Torrent {
     //
     const torrent = Torrent{
         .self = Peer{
@@ -45,7 +45,7 @@ pub fn deinit(torrent: *Torrent, allocator: Allocator) void {
     torrent.connections.deinit();
 }
 
-/// Piece must be the exact length of @"piece length" attribute of the MetaInfo
+/// Piece must be the exact length of @"piece length" attribute of the Metainfo
 /// type. Keep this in mind when writing the last piece i.e. the only one that might
 /// be less than the full length.
 pub fn writePiece(torrent: *Torrent, index: usize, bytes: []const u8) !void {
