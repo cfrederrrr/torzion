@@ -5,11 +5,12 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     //libaries
-    const torzion_mod = b.createModule(.{ .root_source_file = b.path("src/torzion.zig"), .target = target, .optimize = optimize });
+    const torzion_mod = b.createModule(.{ .root_source_file = b.path("src/torzion/root.zig"), .target = target, .optimize = optimize });
     const torzion = b.addLibrary(.{ .linkage = .static, .name = "torzion", .root_module = torzion_mod });
     b.installArtifact(torzion);
 
     const cli = b.dependency("cli", .{ .target = target, .optimize = optimize });
+    const toml = b.dependency("toml", .{ .target = target, .optimize = optimize });
 
     // options
     const options = b.addOptions();
@@ -27,6 +28,9 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("torzion", torzion_mod);
     exe_mod.addImport("cli", cli.module("cli"));
     exe_mod.linkLibrary(cli.artifact("cli"));
+
+    exe_mod.addImport("toml", toml.module("toml"));
+    exe_mod.linkLibrary(toml.artifact("toml"));
 
     const exe = b.addExecutable(.{ .name = "torzion", .root_module = exe_mod });
     b.installArtifact(exe);
