@@ -1,8 +1,8 @@
-pub const Metainfo = @import("torzion/Metainfo.zig");
-pub const tracker = @import("torzion/tracker.zig");
+pub const Metainfo = @import("Metainfo.zig");
+pub const tracker = @import("tracker.zig");
 
-pub const Bencoder = @import("torzion/Bencoder.zig");
-pub const Bdecoder = @import("torzion/Bdecoder.zig");
+pub const Bencoder = @import("Bencoder.zig");
+pub const Bdecoder = @import("Bdecoder.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
