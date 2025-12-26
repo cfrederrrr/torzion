@@ -6,7 +6,9 @@ const tty = std.Io.tty;
 const stdout = std.fs.File.stdout;
 const stderr = std.fs.File.stderr;
 
-const torzion = @import("torzion/MetaInfo.zig");
+const split = std.mem.splitScalar;
+
+const Metainfo = @import("torzion").Metainfo;
 
 const LogLevel = enum {
     /// Error: something has gone wrong. This might be recoverable or might
@@ -58,7 +60,3 @@ pub fn die(comptime message: []const u8, args: anytype, code: u8) noreturn {
 }
 
 pub fn option() !void {}
-
-pub fn readConfigFile(input: []const u8, torrent: *Metainfo) !void {
-    //
-}
