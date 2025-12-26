@@ -9,10 +9,10 @@
             .url = "git+https://github.com/cfrederrrr/zig-cli#f9a516ddc9771ddd2c8c46a280a9ab6cab8261f2",
             .hash = "cli-0.10.0-2eKe_5kEAQBeHqKxUHNTGnETzu81rqKWwT1WPt1jXBt0",
         },
-        // .zig_nullable = .{
-        //     .url = "git+https://github.com/cfrederrrr/zig-nullable#2fc03332bab6e7a9c2b0aba332832398cd4a3084",
-        //     .hash = "zig_nullable-0.0.0-Z9GjyTIVAADEBTL7jY44F7EZkJ9AvYcvUAsOuQGX4Btd",
-        // },
+        .toml = .{
+            .url = "git+https://github.com/sam701/zig-toml#44318b82b961cb3c09a23924c2de80b9192213bd",
+            .hash = "toml-0.3.0-bV14BeiEAQBmkb-ywYhHxpBdt52ztkRmf-EVyEFbrTxt",
+        },
     },
 
     .paths = .{
