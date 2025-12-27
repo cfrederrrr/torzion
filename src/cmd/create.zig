@@ -88,7 +88,15 @@ pub fn run() !void {
     var parser = toml.Parser(Metainfo).init(allocator);
     defer parser.deinit();
 
-    var result = try parser.parseFile(cfg);
+    var result = parser.parseFile(cfg) catch |err| {
+        switch (parser.error_info.?) {
+            .parse => |parse| std.log.debug("parse error at {d}:{d}", .{ parse.line, parse.pos }),
+            .struct_mapping => |m| for (m) |mapping| {
+                std.log.debug("mapping: {s}", .{mapping});
+            },
+        }
+        return err;
+    };
     defer result.deinit();
 
     torrent = result.value;
