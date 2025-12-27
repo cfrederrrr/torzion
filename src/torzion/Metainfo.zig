@@ -5,13 +5,14 @@ const Allocator = std.mem.Allocator;
 const Encoder = @import("Bencoder.zig");
 
 const sha1 = std.crypto.hash.Sha1;
+const hashlen = sha1.digest_length;
 
 const Metainfo = @This();
 pub const Info = struct {
     cross_seed_entry: ?[]const u8 = null,
     files: ?[]File = null,
     length: ?usize = null,
-    name: []const u8,
+    name: ?[]const u8 = null,
     @"piece length": usize = 0x100000,
     pieces: []const u8 = &.{},
     private: bool = false,
@@ -28,23 +29,24 @@ info: Info,
 nodes: ?[][]const u8 = null,
 @"url-list": ?[]const u8 = null,
 
-/// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
+/// This leaks on purpose. Use deinit() with the same allocator to free the memory allocated for this instance
 pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !void {
-    const plen = self.info.@"piece length";
-
     var files = try std.ArrayList(Metainfo.Info.File).initCapacity(allocator, 1);
     defer files.deinit(allocator);
 
     var pctr: usize = 0;
-    var pieces = try allocator.alloc(u8, 0);
-
     var ppos: usize = 0;
-    var piece: [sha1.digest_length]u8 = undefined;
-    std.crypto.secureZero(u8, &piece);
+    var piece = try allocator.alloc(u8, self.info.@"piece length");
+    defer allocator.free(piece);
+
+    var hashes = try allocator.alloc(u8, hashlen);
+    var hash: [hashlen]u8 = undefined;
+    std.crypto.secureZero(u8, &hash);
 
     var walker = try dir.walk(allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
+        if (entry.path[0] == '.') continue;
         switch (entry.kind) {
             .file => {},
             .directory => continue,
@@ -55,16 +57,21 @@ pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !v
         defer file.close();
         const stat = try file.stat();
 
-        pieces = try allocator.realloc(pieces, pieces.len + ((stat.size / plen) * sha1.digest_length));
+        if (stat.size > piece.len - ppos) {
+            // hashes = try allocator.realloc(hashes, hashes.len + ((1 + (stat.size / piece.len)) * hashlen));
+            hashes = try allocator.realloc(hashes, ((1 + pctr) * hashlen) + ((1 + (stat.size / piece.len)) * hashlen));
+        }
 
         var fpos: usize = 0;
         while (fpos < stat.size) {
             ppos += try file.read(piece[ppos..]);
             fpos += ppos;
 
-            if (ppos == plen) {
-                sha1.hash(pieces[(pctr * plen)..((1 + pctr) + plen)], &piece, .{});
-                std.crypto.secureZero(u8, &piece);
+            if (ppos == piece.len) {
+                sha1.hash(piece, &hash, .{});
+                std.crypto.secureZero(u8, piece);
+                std.mem.copyForwards(u8, hashes[(pctr * hashlen)..((1 + pctr) * hashlen)], &hash);
+                std.crypto.secureZero(u8, &hash);
                 ppos = 0;
                 pctr += 1;
             }
@@ -91,8 +98,9 @@ pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !v
     }
 
     // hash the last piece
-    sha1.hash(pieces[pctr * plen .. (1 + pctr) + plen], &piece, .{});
-    self.info.pieces = pieces;
+    sha1.hash(piece, &hash, .{});
+    std.mem.copyForwards(u8, hashes[(pctr * hashlen)..((1 + pctr) * hashlen)], &hash);
+    self.info.pieces = hashes;
     self.info.files = try files.toOwnedSlice(allocator);
 }
 
@@ -127,6 +135,9 @@ pub fn deinit(self: *Metainfo, owner: std.mem.Allocator) void {
         self.info.files = null;
     }
 
-    // if (self.info.pieces.len > 0) owner.free(self.info.pieces);
-    // owner.free(self.info.name);
+    if (self.info.name) |_| {
+        owner.free(self.info.name.?);
+    }
+
+    if (self.info.pieces.len > 0) owner.free(self.info.pieces);
 }
