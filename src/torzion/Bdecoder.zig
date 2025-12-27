@@ -1,16 +1,9 @@
-//! The decoder owns the message and any allocations made during decoding
-//! It copies the message provided to .init()
-//! Calling .deinit() on a decoder frees both the message and everything it had to allocate during decoding
-
-// much of this is borrowed from sphaerophoria https://www.youtube.com/watch?v=fh3i5_61LYk
-
 const std = @import("std");
 const json = std.json;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
 const opts = @import("options");
-
 const debug = std.log.debug;
 
 const Decoder = @This();
@@ -33,6 +26,9 @@ pub const Error = error{
     InvalidField,
     FieldDefinedTwice,
     UnexpectedToken,
+    ExpectedColon,
+    LeadingZeroesNotAllowed,
+    NegativeZeroNotAllowed,
 };
 
 fn skip(self: *Decoder, comptime chars: []const u8) !void {
@@ -104,7 +100,7 @@ fn decodeString(self: *Decoder, slice: *[]const u8) !void {
     // self.skip after it's parsed since there's no colon to skip and we'll get a
     // weird error
     if (self.message[self.cursor] != ':')
-        return Error.FormatError;
+        return Error.ExpectedColon;
 
     const length: usize = try std.fmt.parseUnsigned(usize, self.message[start..self.cursor], 10);
     // now that we know it's a colon and that the unsigned has been parsed, we can
@@ -130,17 +126,13 @@ test "decodeString" {
 /// > with a leading zero, such as i03e, are invalid, other than i0e, which of
 /// > course corresponds to 0.
 fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
-    // if (self.message[self.cursor] != 'i')
-    //     return Error.FormatError;
-    //
-    // self.cursor += 1;
     try self.skip("i");
     const start: usize = self.cursor;
     while (self.cursor < self.message.len) : (self.cursor += 1) {
         switch (self.message[self.cursor]) {
             '-', '0'...'9' => {},
             'e' => break,
-            else => return Error.FormatError,
+            else => return Error.UnexpectedToken,
         }
     }
 
@@ -151,11 +143,11 @@ fn decodeInteger(self: *Decoder, comptime T: type, t: *T) !void {
 
     // i-0e is invalid.
     if (std.mem.eql(u8, number, "-0"))
-        return Error.FormatError;
+        return Error.NegativeZeroNotAllowed;
 
     // All encodings with a leading zero, such as i03e, are invalid, other than i0e
-    if (self.cursor > 3 and number[0] == '0')
-        return Error.FormatError;
+    if (number.len > 1 and number[0] == '0')
+        return Error.LeadingZeroesNotAllowed;
 
     t.* = try std.fmt.parseInt(T, number, 10);
 }
@@ -386,7 +378,6 @@ test "decodeBool" {
 
 /// See https://www.bittorrent.org/beps/bep_0003.html#bencoding
 fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
-    debug("{s}", .{@typeName(T)});
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),

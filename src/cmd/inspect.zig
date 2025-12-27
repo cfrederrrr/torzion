@@ -80,19 +80,25 @@ pub fn run() !void {
 
     var owner = std.heap.ArenaAllocator.init(allocator);
     var mi: torzion.Metainfo = undefined;
-    decoder.decode(&mi, &owner) catch |e| switch (e) {
-        DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        DecoderError.InvalidField => die("Invalid field at index {d}", .{decoder.char()}, 1),
-        DecoderError.FormatError => die("FormatError at index {d}", .{decoder.char()}, 1),
-        DecoderError.TooManyElements => die("TooManyElements at index {d}", .{decoder.char()}, 1),
-        DecoderError.StringOutOfBounds => die("StringOutOfBounds at index {d}", .{decoder.char()}, 1),
-        DecoderError.MissingFields => die("MissingFields at index {d}", .{decoder.char()}, 1),
-        DecoderError.InvalidValue => die("InvalidValue at index {d}", .{decoder.char()}, 1),
-        DecoderError.FieldDefinedTwice => die("FieldDefinedTwice at index {d}", .{decoder.char()}, 1),
-        error.Overflow => return e,
-        // error.OutOfMemory => return e,
-        else => return e, // get rid of this
+    decoder.decode(&mi, &owner) catch |e| {
+        std.log.debug("{s}", .{decoder.message[0..decoder.cursor]});
+        switch (e) {
+            DecoderError.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+            DecoderError.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
+            DecoderError.InvalidField => die("Invalid field at index {d}", .{decoder.char()}, 1),
+            DecoderError.FormatError => die("FormatError at index {d}", .{decoder.char()}, 1),
+            DecoderError.TooManyElements => die("TooManyElements at index {d}", .{decoder.char()}, 1),
+            DecoderError.StringOutOfBounds => die("StringOutOfBounds at index {d}", .{decoder.char()}, 1),
+            DecoderError.MissingFields => die("MissingFields at index {d}", .{decoder.char()}, 1),
+            DecoderError.InvalidValue => die("InvalidValue at index {d}", .{decoder.char()}, 1),
+            DecoderError.FieldDefinedTwice => die("FieldDefinedTwice at index {d}", .{decoder.char()}, 1),
+            DecoderError.ExpectedColon => die("Expected colon at {d} - got {c}", .{ decoder.cursor, decoder.char() }, 1),
+            DecoderError.LeadingZeroesNotAllowed => die("Leading zero found at {d}", .{decoder.cursor}, 1),
+            DecoderError.NegativeZeroNotAllowed => die("Negative zero found at {d}", .{decoder.cursor}, 1),
+            error.Overflow => return e,
+            // error.OutOfMemory => return e,
+            else => return e, // get rid of this
+        }
     };
 
     var writer = stdout().writer(&.{});

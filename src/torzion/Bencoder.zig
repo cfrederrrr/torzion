@@ -35,7 +35,6 @@ fn ensureCapacity(self: *Encoder, len: usize) !void {
 fn write(self: *Encoder, bytes: []const u8) !void {
     try self.ensureCapacity(bytes.len);
     std.mem.copyForwards(u8, self.message[self.cursor..], bytes);
-    std.log.debug("done writing", .{});
     self.cursor += bytes.len;
 }
 
