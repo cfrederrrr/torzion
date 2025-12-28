@@ -134,7 +134,7 @@ fn encodeAny(self: *Encoder, comptime T: type, t: T) !void {
         .array => try self.encodeArray(T, t),
         .optional => |o| if (t) |a| self.encodeAny(o.child, a),
         .pointer => try self.encodeSlice(T, t),
-        .bool => try self.encodeAny(usize, if (t) 1 else 0),
+        .bool => try self.encodeInteger(usize, if (t) 1 else 0),
         else => @compileError("Non bencodable type provided '" ++ @typeName(T) ++ "'"),
     }
 }
