@@ -16,7 +16,7 @@ const log = std.log;
 const Self = @This();
 
 // config options provided via cmdline
-var path: []const u8 = undefined;
+var torrentfile: []const u8 = undefined;
 
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
@@ -31,9 +31,9 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
                 .positional_args = cli.PositionalArgs{
                     .required = try runner.allocPositionalArgs(&.{
                         cli.PositionalArg{
-                            .value_ref = runner.mkRef(&path),
+                            .value_ref = runner.mkRef(&torrentfile),
                             .name = "path",
-                            .help = "PATH",
+                            .help = "torrent file",
                         },
                     }),
                 },
@@ -52,14 +52,19 @@ pub fn run() !void {
     };
 
     const wd = std.fs.cwd();
-    const stat = try wd.statFile(path);
+    const stat = try wd.statFile(torrentfile);
 
     const fc = try allocator.alloc(u8, stat.size);
-    _ = try wd.readFile(path, fc);
+    defer allocator.free(fc);
+    _ = try wd.readFile(torrentfile, fc);
 
-    var decoder = try torzion.Bdecoder.init(allocator, fc);
+    var decoder = torzion.Bdecoder{ .message = fc };
     defer decoder.deinit();
-    const torrent = decoder.decodeAny(torzion.Metainfo) catch |e| switch (e) {
+    const mi: Metainfo = .{};
+
+    var owner = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
+    const torrent = decoder.decode(&mi, owner.allocator()) catch |e| switch (e) {
         torzion.Bdecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         torzion.Bdecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
         else => return e,

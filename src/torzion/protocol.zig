@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Address = std.net.Address;
-const Stream = std.net.Stream;
+const Stream = std.Io.net.Stream;
 const BrokenPipe = Stream.WriteError.BrokenPipe;
 const ConnectionResetByPeer = Stream.WriteError.ConnectionResetByPeer;
 
@@ -46,7 +46,6 @@ const Message = union(enum) {
     pub const Cancel = Request;
 
     pub const Piece = struct {
-        //
         index: u32,
         begin: u32,
         piece: []const u8,
@@ -55,7 +54,7 @@ const Message = union(enum) {
 
 pub const RequestQueue = struct {
     // TODO: determine if 32 is an appropriate size for this
-    requests: [32]Message.Request,
+    requests: [32]Message.Request = undefined,
     begin: u8 = 0,
     end: u8 = 0,
 
@@ -105,17 +104,24 @@ pub const Connection = struct {
 };
 
 pub fn receiveHandshake(info_hash: [20]u8, stream: Stream) !Handshake {
+    var reader = stream.reader(&.{}).interface;
     const pnl = [_]u8{0};
-    _ = try stream.read(&pnl);
+    var read: usize = 0;
 
     if (pnl[0] != 19)
         return Handshake.Error.InvalidProtocol;
 
     var incoming: Handshake = undefined;
-    _ = try stream.read(&incoming.protocol_name);
-    _ = try stream.read(&incoming.reserved);
-    _ = try stream.read(&incoming.info_hash);
-    _ = try stream.read(&incoming.peer_id);
+    const vec: [5][]u8 = .{
+        &pnl,
+        &incoming.protocol_name,
+        &incoming.reserved,
+        &incoming.info_hash,
+        &incoming.peer_id,
+    };
+
+    read += try reader.readVec(&vec);
+    std.debug.assert(read == pnl.len + @sizeOf(Handshake));
 
     if (!std.mem.eql(u8, &incoming.protocol_name, ProtocolName))
         return Handshake.Error.InvalidProtocol;

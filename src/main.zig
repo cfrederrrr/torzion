@@ -7,7 +7,6 @@ const die = tools.die;
 const create = @import("./cmd/create.zig");
 const download = @import("./cmd/download.zig");
 const inspect = @import("./cmd/inspect.zig");
-const parse = @import("./cmd/parse.zig");
 
 pub fn main() !void {
     var runner = try cli.AppRunner.init(std.heap.page_allocator);
@@ -26,6 +25,7 @@ pub fn main() !void {
                 .subcommands = try runner.allocCommands(&.{
                     try create.command(&runner),
                     try inspect.command(&runner),
+                    try download.command(&runner),
                 }),
             },
         },

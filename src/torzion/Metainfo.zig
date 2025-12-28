@@ -25,7 +25,7 @@ comment: ?[]const u8 = null,
 @"created by": ?[]const u8 = null,
 @"creation date": ?usize = null,
 httpseeds: ?[][]const u8 = null,
-info: Info,
+info: Info = .{},
 nodes: ?[][]const u8 = null,
 @"url-list": ?[]const u8 = null,
 

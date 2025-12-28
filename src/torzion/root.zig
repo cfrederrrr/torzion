@@ -8,31 +8,32 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
-pub fn infoHash(self: *Metainfo, allocator: Allocator) ![20]u8 {
-    // there's probably a more efficient way to do all this
-    const encoder = try Bencoder.init(allocator);
-    defer encoder.deinit();
-    try encoder.encodeAny(self.info);
-    const out: [20]u8 = undefined;
-    std.crypto.hash.Sha1.hash(encoder.result(), out, .{});
-    return out;
-}
+// pub fn infoHash(self: *Metainfo, allocator: Allocator) ![20]u8 {
+//     // there's probably a more efficient way to do all this
+//     const encoder = try Bencoder.init(allocator);
+//     defer encoder.deinit();
+//     try encoder.encode(self.info);
+//     const out: [20]u8 = undefined;
+//     std.crypto.hash.Sha1.hash(encoder.result(), out, .{});
+//     return out;
+// }
+//
 
-/// This should only ever be used on instances created using createTorrent()
-/// Also, you must provide the same allocator here as you did there
-///
-/// Instances created by reading a torrent file
-/// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
-pub fn createTorrent(owner: *ArenaAllocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !Metainfo {
-    const wd = std.fs.cwd();
-    const stat = try wd.statFile(path);
-    return switch (stat.kind) {
-        .directory => try Metainfo.createMultiFileTorrent(owner, path, announce, private, piece_length),
-        .file => try Metainfo.createSingleFileTorrent(owner, path, announce, private, piece_length),
-        else => error.InvalidFiletype,
-    };
-}
-
-test {
-    std.testing.refAllDecls(@This());
-}
+// /// This should only ever be used on instances created using createTorrent()
+// /// Also, you must provide the same allocator here as you did there
+// ///
+// /// Instances created by reading a torrent file
+// /// This leaks on purpose. Use deinit() with the same allocater to free the memory allocated for this instance
+// pub fn createTorrent(owner: *ArenaAllocator, path: []const u8, announce: []const u8, private: bool, piece_length: usize) !Metainfo {
+//     const wd = std.fs.cwd();
+//     const stat = try wd.statFile(path);
+//     return switch (stat.kind) {
+//         .directory => try Metainfo.createMultiFileTorrent(owner, path, announce, private, piece_length),
+//         .file => try Metainfo.createSingleFileTorrent(owner, path, announce, private, piece_length),
+//         else => error.InvalidFiletype,
+//     };
+// }
+//
+// test {
+//     std.testing.refAllDecls(@This());
+// }

@@ -19,7 +19,6 @@ bitfield: []const u8,
 const Torrent = @This();
 
 pub fn init(allocator: Allocator, meta: Metainfo, incomplete: []const u8) !Torrent {
-    //
     const torrent = Torrent{
         .self = Peer{
             .id = undefined,
@@ -49,7 +48,6 @@ pub fn deinit(torrent: *Torrent, allocator: Allocator) void {
 /// type. Keep this in mind when writing the last piece i.e. the only one that might
 /// be less than the full length.
 pub fn writePiece(torrent: *Torrent, index: usize, bytes: []const u8) !void {
-    //
     const file = try std.fs.cwd().createFile(torrent.incomplete, .{ .read = true, .truncate = false });
     defer file.close();
 

@@ -49,12 +49,12 @@ pub fn char(self: *Decoder) u8 {
 /// Always decodes from the start of self.message.
 /// In almost all cases, this should only ever be called once per message as it invalidates any objects previously parsed.
 /// The only reason to call it twice is to recover from an error in a previous call to .decode().
-pub fn decode(self: *Decoder, any: anytype, owner: *ArenaAllocator) !void {
+pub fn decode(self: *Decoder, any: anytype, owner: Allocator) !void {
     self.cursor = 0;
 
     const T = @TypeOf(any);
     switch (@typeInfo(T)) {
-        .pointer => |o| try self.decodeAny(o.child, any, owner.allocator()),
+        .pointer => |o| try self.decodeAny(o.child, any, owner),
         else => @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
     }
 }
@@ -66,7 +66,7 @@ test "decode" {
 
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
-    decoder.decode(&mi, &owner) catch |e| {
+    decoder.decode(&mi, owner.allocator()) catch |e| {
         std.debug.print("{s}\n", .{decoder.message[0..decoder.cursor]});
         return e;
     };
@@ -233,7 +233,7 @@ test "decodeStruct" {
     defer owner.deinit();
 
     var item: Item = undefined;
-    try decoder.decode(&item, &owner);
+    try decoder.decode(&item, owner.allocator());
 
     try std.testing.expect(std.mem.eql(u8, item.string, "abcdefghij"));
     try std.testing.expect(item.number == 23);
@@ -292,7 +292,7 @@ test "decodeArray" {
     defer owner.deinit();
 
     var items: [1]Item = undefined;
-    try decoder.decode(&items, &owner);
+    try decoder.decode(&items, owner.allocator());
 
     try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
     try std.testing.expect(items[0].number == 23);
@@ -351,7 +351,7 @@ test "decodeSlice" {
     defer owner.deinit();
 
     var items = try std.testing.allocator.alloc(Item, 0);
-    try decoder.decode(&items, &owner);
+    try decoder.decode(&items, owner.allocator());
 
     try std.testing.expect(std.mem.eql(u8, items[0].string, "abcdefghij"));
     try std.testing.expect(items[0].number == 23);
@@ -372,7 +372,7 @@ test "decodeBool" {
     var b: bool = false;
     var owner = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer owner.deinit();
-    try decoder.decode(&b, &owner);
+    try decoder.decode(&b, owner.allocator());
     try std.testing.expect(b);
 }
 
