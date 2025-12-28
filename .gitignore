@@ -3,3 +3,4 @@ zig-out
 nvim-dap.lua
 docs/
 reference/
+.vscode/
