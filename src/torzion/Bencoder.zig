@@ -49,7 +49,7 @@ fn writeDigits(self: *Encoder, number: usize) !void {
     const len: usize = 1 + log10(number);
     try self.ensureCapacity(len);
 
-    const substr = self.message[self.cursor .. self.cursor + len];
+    const substr = self.message[self.cursor..(self.cursor + len)];
     var countdown: usize = substr.len;
 
     var num: usize = number;
@@ -72,14 +72,12 @@ fn encodeString(self: *Encoder, string: []const u8) !void {
 }
 
 fn encodeInteger(self: *Encoder, comptime Integer: type, integer: Integer) !void {
-    const T = @TypeOf(integer);
-
-    const number: usize = switch (@typeInfo(T)) {
+    const number: usize = switch (@typeInfo(Integer)) {
         .int => |i| switch (i.signedness) {
             .signed => @abs(integer),
             .unsigned => integer,
         },
-        else => @compileError("can't encode '" ++ @typeName(T) ++ "' as int"),
+        else => @compileError("can't encode '" ++ @typeName(Integer) ++ "' as int"),
     };
 
     // const number: usize = @abs(integer);
@@ -90,10 +88,10 @@ fn encodeInteger(self: *Encoder, comptime Integer: type, integer: Integer) !void
     try self.write("e");
 }
 
-fn encodeStruct(self: *Encoder, comptime T: type, dict: T) !void {
+fn encodeStruct(self: *Encoder, comptime Struct: type, dict: Struct) !void {
     try self.write("d");
 
-    inline for (std.meta.fields(T)) |field| {
+    inline for (std.meta.fields(Struct)) |field| {
         switch (@typeInfo(field.type)) {
             .optional => |o| {
                 if (@field(dict, field.name)) |v| {
@@ -120,8 +118,7 @@ fn encodeSlice(self: *Encoder, comptime Slice: type, slice: Slice) !void {
     try self.write("e");
 }
 
-fn encodeArray(self: *Encoder, array: anytype) !void {
-    const Array = @TypeOf(array);
+fn encodeArray(self: *Encoder, comptime Array: type, array: Array) !void {
     const info = @typeInfo(Array);
     if (info != .array) @compileError("encodeArray only works with Array types");
     if (info.array.child == u8) return try self.encodeString(array[0..array.len]);
