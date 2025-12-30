@@ -92,15 +92,20 @@ fn encodeStruct(self: *Encoder, comptime Struct: type, dict: Struct) !void {
     try self.write("d");
 
     inline for (std.meta.fields(Struct)) |field| {
+        const wire_name = if (@hasDecl(Struct, "WireNames") and @hasField(@TypeOf(Struct.WireNames), field.name))
+            @field(Struct.WireNames, field.name)
+        else
+            field.name;
+
         switch (@typeInfo(field.type)) {
             .optional => |o| {
                 if (@field(dict, field.name)) |v| {
-                    try self.encodeString(field.name);
+                    try self.encodeString(wire_name);
                     try self.encodeAny(o.child, v);
                 }
             },
             else => {
-                try self.encodeString(field.name);
+                try self.encodeString(wire_name);
                 try self.encodeAny(field.type, @field(dict, field.name));
             },
         }

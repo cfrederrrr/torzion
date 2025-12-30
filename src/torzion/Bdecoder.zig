@@ -159,6 +159,24 @@ test "decodeInteger" {
     try std.testing.expect(number == 23);
 }
 
+fn decodeUnion(self: *Decoder, comptime Union: type, u: *Union, owner: Allocator) !void {
+    const info = @typeInfo(Union).@"union";
+    if (info.tag_type == null)
+        @compileError("decodeUnion only decodes tagged union types");
+
+    var key: []const u8 = undefined;
+    try self.decodeString(&key);
+    inline for (info.fields) |field| {
+        if (std.mem.eql(u8, key, field.name)) {
+            var val: field.type = undefined;
+            try self.decodeAny(field.type, &val, owner);
+            u.* = @unionInit(field.type, key, val);
+            return;
+        }
+    }
+    return Error.InvalidField;
+}
+
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
 /// > Dictionaries are encoded as a 'd' followed by a list of alternating keys
 /// > and their corresponding values followed by an 'e'. For example,
@@ -183,7 +201,13 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
         inline for (info.fields, 0..) |field, i| {
             if (field.is_comptime) @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ field.name);
 
-            if (std.mem.eql(u8, key, field.name)) {
+            const wire_name = if (@hasDecl(T, "WireNames") and (@hasField(@TypeOf(T.WireNames), field.name)))
+                @field(T.WireNames, field.name)
+            else
+                field.name;
+
+            if (std.mem.eql(u8, key, wire_name)) {
+                // if (std.mem.eql(u8, key, field.name)) {
                 if (fields_seen[i]) return Error.FieldDefinedTwice;
 
                 const F = switch (@typeInfo(field.type)) {
@@ -381,6 +405,7 @@ fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
+        .@"union" => try self.decodeUnion(T, t),
         .array => try self.decodeArray(T, t, owner),
         .pointer => try self.decodeSlice(T, t, owner),
         .bool => try self.decodeBool(t),

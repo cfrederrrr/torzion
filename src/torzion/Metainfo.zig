@@ -13,21 +13,32 @@ pub const Info = struct {
     files: ?[]File = null,
     length: ?usize = null,
     name: ?[]const u8 = null,
-    @"piece length": usize = 0x100000,
+    piece_length: usize = 0x100000,
     pieces: []const u8 = &.{},
     private: bool = false,
     pub const File = struct { length: usize, path: [][]const u8 };
+
+    pub const WireNames = .{
+        .piece_length = "piece length",
+    };
 };
 
 announce: ?[]const u8 = null, // see https://www.bittorrent.org/beps/bep_0003.html
-@"announce-list": ?[][][]const u8 = null, // see https://www.bittorrent.org/beps/bep_0012.html
+announce_list: ?[][][]const u8 = null, // see https://www.bittorrent.org/beps/bep_0012.html
 comment: ?[]const u8 = null,
-@"created by": ?[]const u8 = null,
-@"creation date": ?usize = null,
+created_by: ?[]const u8 = null,
+creation_date: ?usize = null,
 httpseeds: ?[][]const u8 = null,
 info: Info = .{},
 nodes: ?[][]const u8 = null,
-@"url-list": ?[]const u8 = null,
+url_list: ?[]const u8 = null,
+
+pub const WireNames = .{
+    .announce_list = "announce-list",
+    .created_by = "created by",
+    .creation_date = "creation date",
+    .url_list = "url-list",
+};
 
 /// This leaks on purpose. Use deinit() with the same allocator to free the memory allocated for this instance
 pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !void {
@@ -36,7 +47,7 @@ pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !v
 
     var pctr: usize = 0;
     var ppos: usize = 0;
-    var piece = try allocator.alloc(u8, self.info.@"piece length");
+    var piece = try allocator.alloc(u8, self.info.piece_length);
     defer allocator.free(piece);
 
     var hashes = try allocator.alloc(u8, hashlen);
@@ -117,10 +128,10 @@ test indexDirectory {
 }
 
 pub fn deinit(self: *Metainfo, owner: std.mem.Allocator) void {
-    if (self.@"announce-list") |_| {
-        for (self.@"announce-list".?) |*sub| owner.free(sub.*);
-        owner.free(self.@"announce-list".?);
-        self.@"announce-list" = null;
+    if (self.announce_list) |_| {
+        for (self.announce_list.?) |*sub| owner.free(sub.*);
+        owner.free(self.announce_list.?);
+        self.announce_list = null;
     }
 
     if (self.httpseeds) |_| {
