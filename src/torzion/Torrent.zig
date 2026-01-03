@@ -28,7 +28,7 @@ pub fn init(allocator: Allocator, meta: Metainfo, incomplete: []const u8) !Torre
         .peers = Peers.init(allocator),
         .connections = PeerConnections.init(allocator),
         .meta = meta,
-        .bitfield = try allocator.alloc(u8, meta.info.pieces * meta.info.@"piece length"),
+        .bitfield = try allocator.alloc(u8, meta.info.pieces * meta.info.piece_length),
         .incomplete = incomplete,
     };
 
@@ -99,7 +99,7 @@ pub fn joinSwarm(
                 ok.peers;
             },
             .failure => |failure| {
-                failure.@"failure reason";
+                failure.failure_reason;
             },
         }
     }
