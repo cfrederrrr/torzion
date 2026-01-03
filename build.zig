@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
 
     const cli = b.dependency("cli", .{ .target = target, .optimize = optimize });
     const toml = b.dependency("toml", .{ .target = target, .optimize = optimize });
+    // const httpz = b.dependency("httpz", .{ .target = target, .optimize = optimize });
 
     // options
     const options = b.addOptions();
@@ -31,6 +32,9 @@ pub fn build(b: *std.Build) void {
 
     exe_mod.addImport("toml", toml.module("toml"));
     exe_mod.linkLibrary(toml.artifact("toml"));
+
+    // exe_mod.addImport("httpz", httpz.module("httpz"));
+    // exe_mod.linkLibrary(httpz.artifact("httpz"));
 
     const exe = b.addExecutable(.{ .name = "torzion", .root_module = exe_mod });
     b.installArtifact(exe);
