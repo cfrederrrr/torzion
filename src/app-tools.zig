@@ -8,7 +8,8 @@ const stderr = std.fs.File.stderr;
 
 const split = std.mem.splitScalar;
 
-const Metainfo = @import("torzion").Metainfo;
+const torzion = @import("torzion");
+const Metainfo = torzion.Metainfo;
 
 const LogLevel = enum {
     /// Error: something has gone wrong. This might be recoverable or might
@@ -59,4 +60,20 @@ pub fn die(comptime message: []const u8, args: anytype, code: u8) noreturn {
     std.process.exit(code);
 }
 
-pub fn option() !void {}
+pub fn logDecoderError(err: torzion.Bdecoder.Error) !void {
+    //
+    switch (err) {
+        torzion.Bdecoder.FormatError => {},
+        torzion.Bdecoder.TooManyElements => {},
+        torzion.Bdecoder.StringOutOfBounds => {},
+        torzion.Bdecoder.InvalidCharacter => {},
+        torzion.Bdecoder.MissingFields => {},
+        torzion.Bdecoder.InvalidValue => {},
+        torzion.Bdecoder.InvalidField => {},
+        torzion.Bdecoder.FieldDefinedTwice => {},
+        torzion.Bdecoder.UnexpectedToken => {},
+        torzion.Bdecoder.ExpectedColon => {},
+        torzion.Bdecoder.LeadingZeroesNotAllowed => {},
+        torzion.Bdecoder.NegativeZeroNotAllowed => {},
+    }
+}
