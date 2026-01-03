@@ -8,6 +8,20 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
+pub fn bdecode(comptime T: type, message: []const u8, owner: Allocator) !void {
+    var decoder = Bdecoder{ .message = message };
+    var t: T = .{};
+    try decoder.decode(&t, owner);
+    return t;
+}
+
+/// This leaks the const u8
+pub fn bencode(any: anytype, owner: Allocator) ![]const u8 {
+    var encoder = Bencoder{ .allocator = owner };
+    try encoder.encode(any);
+    return encoder.message;
+}
+
 // pub fn infoHash(self: *Metainfo, allocator: Allocator) ![20]u8 {
 //     // there's probably a more efficient way to do all this
 //     const encoder = try Bencoder.init(allocator);
