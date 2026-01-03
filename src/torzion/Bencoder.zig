@@ -1,9 +1,8 @@
 const std = @import("std");
 const log10 = std.math.log10;
-const pageSize = std.heap.pageSize;
 
 cursor: usize = 0,
-message: []u8 = &[_]u8{},
+message: []u8 = &.{},
 allocator: std.mem.Allocator,
 
 const Encoder = @This();
@@ -12,22 +11,11 @@ pub const Error = error{
     StringCannotBeEmpty,
 };
 
-pub fn init(allocator: std.mem.Allocator) !Encoder {
-    const buffer = try allocator.alloc(u8, pageSize()); // TODO: delete this?
-    return .{
-        .allocator = allocator,
-        .message = buffer, // TODO: start with &[_]u8{}?
-    };
-}
-
-pub fn deinit(self: *Encoder) void {
-    self.allocator.free(self.message);
-}
-
 fn ensureCapacity(self: *Encoder, len: usize) !void {
+    const page_size = std.heap.pageSize();
+    if (self.message.len == 0) self.message = try self.allocator.alloc(u8, page_size);
     if (self.cursor + len >= self.message.len) {
-        // how many pages do we need? len / pageSize()
-        const new_len = self.message.len + (1 + len / pageSize()) * pageSize();
+        const new_len = self.message.len + (1 + len / page_size) * page_size;
         self.message = try self.allocator.realloc(self.message, new_len);
     }
 }
@@ -88,10 +76,32 @@ fn encodeInteger(self: *Encoder, comptime Integer: type, integer: Integer) !void
     try self.write("e");
 }
 
+fn fieldSorter(Struct: type, lhs: std.builtin.Type.StructField, rhs: std.builtin.Type.StructField) bool {
+    const l = if (@hasDecl(Struct, "WireNames") and @hasField(@TypeOf(Struct.WireNames), lhs.name))
+        @field(Struct.WireNames, lhs.name)
+    else
+        lhs.name;
+
+    const r = if (@hasDecl(Struct, "WireNames") and @hasField(@TypeOf(Struct.WireNames), rhs.name))
+        @field(Struct.WireNames, rhs.name)
+    else
+        rhs.name;
+
+    const max = if (l.len < r.len) l.len else r.len;
+    var i: usize = 0;
+    while (i < max) : (i += 1) if (l[i] < r[i]) return true else if (l[i] > r[i]) break;
+    return false;
+}
+
 fn encodeStruct(self: *Encoder, comptime Struct: type, dict: Struct) !void {
+    const info = @typeInfo(Struct).@"struct";
+    comptime var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
+    inline for (std.meta.fields(Struct), 0..) |field, i| fields[i] = field;
+    comptime std.mem.sort(std.builtin.Type.StructField, &fields, Struct, fieldSorter);
+
     try self.write("d");
 
-    inline for (std.meta.fields(Struct)) |field| {
+    inline for (fields) |field| {
         const wire_name = if (@hasDecl(Struct, "WireNames") and @hasField(@TypeOf(Struct.WireNames), field.name))
             @field(Struct.WireNames, field.name)
         else
