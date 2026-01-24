@@ -8,7 +8,10 @@ const die = clitools.die;
 const streql = clitools.streql;
 
 const torzion = @import("torzion");
+const bdecode = torzion.bdecode;
 const Metainfo = torzion.Metainfo;
+
+const announce = torzion.Torrent.announce;
 
 const exit = std.process.exit;
 const log = std.log;
@@ -18,6 +21,8 @@ const Self = @This();
 // config options provided via cmdline
 var torrentfile: []const u8 = &.{};
 var outpath: []const u8 = ".";
+var max_peers: usize = 50;
+var listen_port: u16 = 8661;
 
 pub fn command(runner: *cli.AppRunner) !cli.Command {
     return cli.Command{
@@ -25,7 +30,20 @@ pub fn command(runner: *cli.AppRunner) !cli.Command {
         .description = .{
             .one_line = "torzion",
         },
-        .options = try runner.allocOptions(&.{}),
+        .options = try runner.allocOptions(&.{
+            .{
+                .long_name = "listen",
+                .value_ref = runner.mkRef(&listen_port),
+                .short_alias = 'p',
+                .help = "The port remote peers can connect to",
+            },
+            .{
+                .long_name = "max-peers",
+                .value_ref = runner.mkRef(&max_peers),
+                .short_alias = 'm',
+                .help = "The maximum number of peers to maintain connections with",
+            },
+        }),
         .target = cli.CommandTarget{
             .action = cli.CommandAction{
                 .exec = action,
@@ -59,18 +77,33 @@ pub fn run() !void {
     defer allocator.free(message);
     _ = try wd.readFile(torrentfile, message);
 
-    var decoder = torzion.Bdecoder{ .message = message };
-    var mi: Metainfo = .{};
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
 
-    var owner = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const owner = arena.allocator();
+    var meta_info = try bdecode(Metainfo, message, owner);
+    defer meta_info.deinit(owner);
+    var torrent: torzion.Torrent = try .init(owner, meta_info, .{
+        .port = listen_port,
+        .root = outpath,
+    });
 
-    decoder.decode(&mi, owner.allocator()) catch |e| switch (e) {
-        torzion.Bdecoder.Error.InvalidCharacter => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        torzion.Bdecoder.Error.UnexpectedToken => die("Invalid character '{c}' at index {d}", .{ decoder.char(), decoder.cursor }, 1),
-        else => return e,
-    };
+    var threaded = std.Io.Threaded.init(allocator);
+    defer threaded.deinit();
+    const io = threaded.io();
+    while (torrent.state.left > 0) {
+        var future = io.async(announce, .{ &torrent, .empty, allocator });
+        const results = future.await(io) catch |e| {
+            log.debug("{s}\n", .{@errorName(e)});
+            die("unable to reach trackers", .{}, 1);
+        };
+        _ = results;
+        defer _ = future.cancel(io) catch {
+            die("unable to reach trackers", .{}, 1);
+        };
 
-    // torzion.joinSwarm();
+        // torrent.joinSwarm(max_peers);
+    }
 }
 
 pub fn action() anyerror!void {
