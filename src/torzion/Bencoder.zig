@@ -159,8 +159,10 @@ pub fn encode(self: *Encoder, any: anytype) !void {
     const T = @TypeOf(any);
     switch (@typeInfo(T)) {
         .pointer => |o| return self.encodeAny(o.child, any.*),
-        else => return self.encodeAny(T, any), // @compileError("non-pointer type '" ++ @typeName(T) ++ "' provided"),
+        else => return self.encodeAny(T, any),
     }
+
+    _ = self.allocator.resize(self.message, self.cursor);
 }
 
 pub fn result(self: *Encoder) []u8 {
