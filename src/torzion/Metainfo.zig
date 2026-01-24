@@ -2,7 +2,7 @@ const std = @import("std");
 const basename = std.fs.path.basename;
 
 const Allocator = std.mem.Allocator;
-const Encoder = @import("Bencoder.zig");
+const torzion = @import("root.zig");
 
 const sha1 = std.crypto.hash.Sha1;
 const hashlen = sha1.digest_length;
@@ -69,7 +69,6 @@ pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !v
         const stat = try file.stat();
 
         if (stat.size > piece.len - ppos) {
-            // hashes = try allocator.realloc(hashes, hashes.len + ((1 + (stat.size / piece.len)) * hashlen));
             hashes = try allocator.realloc(hashes, ((1 + pctr) * hashlen) + ((1 + (stat.size / piece.len)) * hashlen));
         }
 
@@ -115,16 +114,44 @@ pub fn indexDirectory(self: *Metainfo, dir: std.fs.Dir, allocator: Allocator) !v
     self.info.files = try files.toOwnedSlice(allocator);
 }
 
+test indexDirectory {
+    // 1. find a torrent with multiple files
+    // 2. download it
+    // 3. run it here
+}
+
 pub fn indexFile(self: *Metainfo, file: std.fs.File, allocator: Allocator) !void {
     _ = self;
     _ = file;
     _ = allocator;
 }
 
-test indexDirectory {
-    // 1. find a torrent with multiple files
-    // 2. download it
-    // 3. run it here
+pub fn hashInfo(self: Metainfo, info_hash: *[hashlen]u8, allocator: Allocator) !void {
+    const message = try torzion.bencode(self.info, allocator);
+    defer allocator.free(message);
+    std.crypto.hash.Sha1.hash(message, info_hash, .{});
+}
+
+/// Switching between .announce and .announce_list gets complicated if you try
+/// to use them directly, as you have to conditionally allocate, and then
+/// conditionally free. Instead, use .announceList(allocator) to always copy and then
+/// always free the announce list
+pub fn announceList(self: Metainfo, allocator: Allocator) ![][][]const u8 {
+    if (self.announce_list) |list| {
+        const announce_list = try allocator.alloc([][]const u8, list.len);
+        for (list, 0..) |tier, i| {
+            announce_list[i] = try allocator.alloc([]const u8, tier.len);
+            for (tier, 0..) |url, j| announce_list[i][j] = url;
+        }
+        return announce_list;
+    } else if (self.announce) |announce| {
+        const announce_list = try allocator.alloc([][]const u8, 1);
+        announce_list[0] = try allocator.alloc([]const u8, 1);
+        announce_list[0][0] = announce;
+        return announce_list;
+    }
+
+    return error.NoAnnounceDefined;
 }
 
 pub fn deinit(self: *Metainfo, owner: std.mem.Allocator) void {
