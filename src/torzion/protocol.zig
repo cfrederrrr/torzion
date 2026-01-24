@@ -6,11 +6,7 @@ const Stream = std.Io.net.Stream;
 const BrokenPipe = Stream.WriteError.BrokenPipe;
 const ConnectionResetByPeer = Stream.WriteError.ConnectionResetByPeer;
 
-pub const Peer = struct {
-    id: [20]u8,
-    ip: []const u8,
-    port: u16,
-};
+const Peer = @import("Peer.zig");
 
 const Error = error{
     InvalidPeerAddress,
