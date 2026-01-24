@@ -13,25 +13,23 @@ message: []const u8,
 options: Options = .{},
 
 const Options = struct {
-    ignoreInvalidFields: bool = opts.ignore_invalid_fields,
+    ignoreUnknownFields: bool = opts.ignore_invalid_fields,
 };
 
 pub const Error = error{
-    FormatError,
-    TooManyElements,
-    StringOutOfBounds,
-    InvalidCharacter,
-    MissingFields,
-    InvalidValue,
-    InvalidField,
     FieldDefinedTwice,
-    UnexpectedToken,
-    ExpectedColon,
+    InvalidValue,
     LeadingZeroesNotAllowed,
+    MalformedString,
+    MissingFields,
     NegativeZeroNotAllowed,
+    StringOutOfBounds,
+    TooManyElements,
+    UnexpectedToken,
+    UnknownField,
 };
 
-fn skip(self: *Decoder, comptime chars: []const u8) !void {
+fn skip(self: *Decoder, comptime chars: []const u8) Error!void {
     if (std.mem.eql(u8, chars, self.message[self.cursor .. self.cursor + chars.len]))
         self.cursor += chars.len
     else
@@ -90,7 +88,7 @@ fn decodeString(self: *Decoder, slice: *[]const u8) !void {
         switch (self.char()) {
             '0'...'9' => {},
             ':' => break,
-            else => return Error.InvalidCharacter,
+            else => return Error.MalformedString,
         }
     }
 
@@ -100,7 +98,7 @@ fn decodeString(self: *Decoder, slice: *[]const u8) !void {
     // self.skip after it's parsed since there's no colon to skip and we'll get a
     // weird error
     if (self.message[self.cursor] != ':')
-        return Error.ExpectedColon;
+        return Error.MalformedString;
 
     const length: usize = try std.fmt.parseUnsigned(usize, self.message[start..self.cursor], 10);
     // now that we know it's a colon and that the unsigned has been parsed, we can
@@ -170,11 +168,11 @@ fn decodeUnion(self: *Decoder, comptime Union: type, u: *Union, owner: Allocator
         if (std.mem.eql(u8, key, field.name)) {
             var val: field.type = undefined;
             try self.decodeAny(field.type, &val, owner);
-            u.* = @unionInit(field.type, key, val);
+            u.* = @unionInit(field.type, field.name, val);
             return;
         }
     }
-    return Error.InvalidField;
+    return Error.UnknownField;
 }
 
 /// https://www.bittorrent.org/beps/bep_0003.html#bencoding
@@ -222,8 +220,8 @@ fn decodeStruct(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void
                 break;
             }
         } else {
-            if (!self.options.ignoreInvalidFields) {
-                return Error.InvalidField;
+            if (!self.options.ignoreUnknownFields) {
+                return Error.UnknownField;
             }
         }
     }
@@ -283,13 +281,10 @@ fn decodeArray(self: *Decoder, comptime Array: type, array: *Array, owner: Alloc
 
     const Child = info.array.child;
     if (Child == u8) {
-        // TODO:
-        // this can probably be copied directly to the array in .decodeString
-        // but i can't think of how yet. the todo is to figure it out and do it
-        const string: []const u8 = undefined;
+        var string: []const u8 = undefined;
         try self.decodeString(&string);
         if (string.len != array.len) return Error.InvalidValue;
-        std.mem.copyForwards(u8, array.*, string);
+        std.mem.copyForwards(u8, array, string);
         return;
     }
 
@@ -405,7 +400,7 @@ fn decodeAny(self: *Decoder, comptime T: type, t: *T, owner: Allocator) !void {
     switch (@typeInfo(T)) {
         .comptime_int, .int => try self.decodeInteger(T, t),
         .@"struct" => try self.decodeStruct(T, t, owner),
-        .@"union" => try self.decodeUnion(T, t),
+        .@"union" => try self.decodeUnion(T, t, owner),
         .array => try self.decodeArray(T, t, owner),
         .pointer => try self.decodeSlice(T, t, owner),
         .bool => try self.decodeBool(t),
