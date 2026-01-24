@@ -15,8 +15,12 @@ pub fn build(b: *std.Build) void {
 
     // options
     const options = b.addOptions();
+
     const ignore_invalid_fields = b.option(bool, "ignore_invalid_fields", "") orelse false;
     options.addOption(bool, "ignore_invalid_fields", ignore_invalid_fields);
+    const custom_logger = b.option(bool, "custom_logger", "") orelse false;
+    options.addOption(bool, "custom_logger", custom_logger);
+
     torzion.root_module.addOptions("options", options);
 
     // zig build
